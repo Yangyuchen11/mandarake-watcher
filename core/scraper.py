@@ -10,6 +10,8 @@ import logging
 from typing import List, Dict, Optional, Tuple, Any
 from urllib.parse import urljoin, parse_qs, urlparse
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 
 from core.categories import category_mgr, ROOT_DOLL_CODE
@@ -45,6 +47,18 @@ class MandarakeScraper:
         self.max_delay = max_delay
         self.session = requests.Session()
         self.session.headers.update(DEFAULT_HEADERS)
+        # 配置针对 HTTP Keep-Alive 空闲超时的底层透明重试适配器
+        retries = Retry(
+            total=3,
+            connect=3,
+            read=3,
+            backoff_factor=0.3,
+            status_forcelist=[502, 503, 504],
+            raise_on_status=False
+        )
+        adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=retries)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
         self.last_fetch_failed = False
         self._ensure_cookies()
 
@@ -97,8 +111,16 @@ class MandarakeScraper:
 
             except Exception as e:
                 last_exc = e
+                # 若连接被远端静默断开，主动重置连接池
+                try:
+                    self.session.close()
+                except Exception:
+                    pass
                 wait_sec = (attempt + 1) * 1.5
-                logger.warning(f"网络请求发生错误: {e}，正在重试 ({attempt + 1}/{self.max_retries + 1})...")
+                if attempt > 0:
+                    logger.warning(f"网络请求发生错误: {e}，正在重试 ({attempt + 1}/{self.max_retries + 1})...")
+                else:
+                    logger.debug(f"检测到远端空闲长连接重置 ({e})，正在自动重连...")
                 time.sleep(wait_sec)
 
         self.last_fetch_failed = True
