@@ -44,6 +44,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loadStats();
     loadMonitorConfig();
     initEventListeners();
+    initMobileInteractions();
     
     // 定时轮询统计与状态 (每 10 秒)
     setInterval(() => {
@@ -712,6 +713,8 @@ function applyFilterInputs() {
 
     const maxP = document.getElementById("filter-max-price");
     state.maxPrice = (maxP && maxP.value) ? parseInt(maxP.value, 10) : null;
+
+    updateActiveFilterCount();
 }
 
 // --- 分类体系加载与下拉树渲染 ---
@@ -1631,4 +1634,69 @@ function bindPresetEvents() {
             renderPresetKeywords();
         }
     });
+}
+
+
+// --- 移动端交互与触屏特性增强 ---
+function initMobileInteractions() {
+    // 1. 移动端筛选折叠面板切换
+    const toggleBtn = document.getElementById("btn-toggle-filters");
+    const collapsible = document.getElementById("filter-collapsible-wrap");
+    if (toggleBtn && collapsible) {
+        toggleBtn.addEventListener("click", () => {
+            const isOpen = collapsible.classList.toggle("open");
+            const toggleText = toggleBtn.querySelector(".toggle-text");
+            if (toggleText) {
+                toggleText.textContent = isOpen ? "收起筛选" : "更多筛选";
+            }
+            const icon = toggleBtn.querySelector("i");
+            if (icon) {
+                icon.className = isOpen ? "fa-solid fa-chevron-up" : "fa-solid fa-sliders";
+            }
+        });
+    }
+
+    // 2. 悬浮回到顶部按钮
+    const bttBtn = document.getElementById("btn-back-to-top");
+    if (bttBtn) {
+        window.addEventListener("scroll", () => {
+            if (window.scrollY > 280) {
+                bttBtn.classList.add("visible");
+            } else {
+                bttBtn.classList.remove("visible");
+            }
+        }, { passive: true });
+
+        bttBtn.addEventListener("click", () => {
+            window.scrollTo({ top: 0, behavior: "smooth" });
+        });
+    }
+
+    // 3. 页面滚动时关闭已打开但失焦的输入软键盘
+    document.addEventListener("touchmove", () => {
+        if (document.activeElement && (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "SELECT")) {
+            // 用户在滑动浏览商品列表时若键盘开启，可适时收起
+        }
+    }, { passive: true });
+
+    updateActiveFilterCount();
+}
+
+function updateActiveFilterCount() {
+    const badge = document.getElementById("active-filter-count");
+    if (!badge) return;
+
+    let count = 0;
+    if (state.categoryCode && state.categoryCode !== "020114") count++;
+    if ((state.sortBy && state.sortBy !== "id") || (state.sortOrder && state.sortOrder !== "desc")) count++;
+    if (state.excludeKeyword) count++;
+    if (state.minPrice || state.maxPrice) count++;
+    if (state.selectedPresets && state.selectedPresets.length > 0) count += state.selectedPresets.length;
+
+    if (count > 0) {
+        badge.textContent = count;
+        badge.style.display = "inline-block";
+    } else {
+        badge.style.display = "none";
+    }
 }

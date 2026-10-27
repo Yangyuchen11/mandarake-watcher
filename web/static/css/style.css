@@ -1624,3 +1624,805 @@ input:checked + .slider:before {
     border-radius: var(--radius-sm);
     margin: 2px;
 }
+
+
+/* ==========================================================================
+   移动端与触屏响应式适配拓展 (Mobile & Touch Optimization)
+   ========================================================================== */
+
+/* 1. 结构化筛选工具栏增强 (Desktop & Base) */
+.filter-primary-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+}
+
+.flex-search {
+    flex: 1;
+}
+
+.filter-primary-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.btn-mobile-filter-toggle {
+    display: none; /* PC 默认隐藏折叠按钮，移动端显示 */
+    position: relative;
+}
+
+.active-filter-badge {
+    background: var(--brand-primary);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: var(--radius-full);
+    margin-left: 4px;
+}
+
+.filter-stock-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.stock-filter-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.filter-label-inline {
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.filter-collapsible-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: var(--transition);
+}
+
+.filter-grid-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+
+.price-inputs-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.filter-actions-inline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+
+/* 悬浮回到顶部按钮 */
+.back-to-top-btn {
+    position: fixed;
+    right: 20px;
+    bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(22, 28, 42, 0.88);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 87, 34, 0.4);
+    color: #ff7043;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+    z-index: 800;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(12px) scale(0.9);
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    touch-action: manipulation;
+}
+
+.back-to-top-btn.visible {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0) scale(1);
+}
+
+.back-to-top-btn:hover, .back-to-top-btn:active {
+    background: var(--brand-primary);
+    color: #fff;
+    border-color: #fff;
+    box-shadow: 0 4px 18px var(--brand-glow);
+}
+
+/* 触屏交互通用提升 */
+@media (hover: none) and (pointer: coarse) {
+    button, .tab-btn, .seg-btn, .preset-tag, .product-card {
+        -webkit-tap-highlight-color: transparent;
+    }
+    
+    .product-card:active {
+        transform: scale(0.975);
+        border-color: var(--brand-primary);
+    }
+
+    .btn:active {
+        transform: scale(0.96);
+    }
+}
+
+/* ==========================================================================
+   响应式断点：平板设备 (Tablet / iPad, <= 1024px)
+   ========================================================================== */
+@media (max-width: 1024px) {
+    .header-container {
+        padding: 10px 16px;
+    }
+    
+    .app-main {
+        padding: 16px;
+    }
+    
+    .products-grid {
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 14px;
+    }
+    
+    .category-select-group {
+        min-width: 260px;
+    }
+}
+
+/* ==========================================================================
+   响应式核心断点：移动端手机 (Mobile Phones, <= 768px)
+   ========================================================================== */
+@media (max-width: 768px) {
+    /* 1. iOS Safari 缩放防误触 & 基础排版 */
+    .form-input, .form-select, .form-textarea {
+        font-size: 14px; /* 清爽且易输入 */
+    }
+    
+    /* 2. 顶部 Header 紧凑排版 */
+    .app-header {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+    }
+    
+    .header-container {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 10px 12px 6px 12px;
+        gap: 8px;
+    }
+    
+    .brand {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 100%;
+    }
+    
+    .brand-icon {
+        font-size: 20px;
+    }
+    
+    .brand-text h1 {
+        font-size: 15px;
+        letter-spacing: 0;
+    }
+    
+    .brand-text p {
+        display: none; /* 手机端隐藏繁琐副标，极致纯粹 */
+    }
+    
+    .header-actions {
+        margin-left: auto;
+    }
+    
+    .auth-indicator {
+        padding: 3px 8px;
+        font-size: 11px;
+    }
+    
+    /* 统计小胶囊支持横向单行滑动，不折行不挤压 */
+    .header-stats {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        display: flex;
+        gap: 6px;
+        padding: 2px 0 4px 0;
+        width: 100%;
+    }
+    
+    .header-stats::-webkit-scrollbar {
+        display: none;
+    }
+    
+    .stat-pill {
+        flex-shrink: 0;
+        padding: 3px 8px;
+        font-size: 11px;
+        border-radius: var(--radius-full);
+    }
+
+    /* 3. 底部 App 风格固定导航栏 (Bottom Navigation Bar) */
+    .app-main {
+        padding: 10px 10px calc(72px + env(safe-area-inset-bottom, 0px)) 10px;
+        margin: 0;
+        width: 100%;
+    }
+    
+    .tabs-nav {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 990;
+        margin: 0;
+        padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px)) 6px;
+        background: rgba(10, 14, 23, 0.96);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        border-bottom: none;
+        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5);
+        display: flex;
+        justify-content: space-around;
+        gap: 4px;
+    }
+    
+    .tab-btn {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        padding: 6px 2px;
+        font-size: 10px;
+        font-weight: 500;
+        color: var(--text-muted);
+        border-radius: 8px;
+        border: none;
+        background: transparent;
+        touch-action: manipulation;
+    }
+    
+    .tab-btn i {
+        font-size: 18px;
+        margin: 0;
+    }
+    
+    .tab-btn.active {
+        color: #fff;
+        background: rgba(255, 87, 34, 0.16);
+        box-shadow: none;
+    }
+    
+    .tab-btn.active i {
+        color: var(--brand-primary);
+        filter: drop-shadow(0 0 8px var(--brand-glow));
+    }
+
+    /* 4. 商品筛选面板折叠与优化 */
+    .filter-panel {
+        padding: 12px;
+        margin-bottom: 12px;
+        gap: 10px;
+        border-radius: var(--radius-md);
+    }
+    
+    .filter-primary-row {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .search-input-wrap .form-input {
+        height: 40px;
+        font-size: 14px;
+    }
+
+    .filter-primary-actions {
+        display: flex;
+        width: 100%;
+        gap: 8px;
+    }
+
+    .filter-primary-actions .btn {
+        flex: 1;
+        justify-content: center;
+        height: 38px;
+        font-size: 13px;
+    }
+
+    .btn-mobile-filter-toggle {
+        display: inline-flex;
+    }
+
+    .filter-stock-row {
+        width: 100%;
+    }
+
+    .stock-filter-wrap {
+        width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+    }
+
+    .filter-label-inline {
+        display: none; /* 移动端精简文字，直接看分段条 */
+    }
+
+    .btn-group-segmented {
+        width: 100%;
+        display: flex;
+    }
+
+    .seg-btn {
+        flex: 1;
+        text-align: center;
+        padding: 8px 4px;
+        font-size: 12px;
+        min-height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* 折叠详细筛选区 */
+    .filter-collapsible-wrap {
+        display: none; /* 默认收起 */
+        padding-top: 10px;
+        border-top: 1px dashed rgba(255, 255, 255, 0.1);
+    }
+
+    .filter-collapsible-wrap.open {
+        display: flex;
+        animation: filterExpand 0.22s ease-out;
+    }
+
+    @keyframes filterExpand {
+        from { opacity: 0; transform: translateY(-6px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    .filter-grid-row {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+
+    .filter-group {
+        flex-direction: column;
+        align-items: stretch;
+        width: 100%;
+        gap: 4px;
+    }
+
+    .category-select-group {
+        min-width: 100%;
+    }
+
+    .form-select, .form-input {
+        width: 100%;
+        height: 38px;
+    }
+
+    .price-inputs-wrap {
+        display: flex;
+        width: 100%;
+    }
+
+    .price-inputs-wrap .price-input {
+        flex: 1;
+        width: 100%;
+    }
+
+    .filter-actions-inline {
+        margin-left: 0;
+        width: 100%;
+    }
+
+    .filter-actions-inline .btn {
+        width: 100%;
+        justify-content: center;
+        height: 38px;
+    }
+
+    /* 快捷预设标签横向滚动 */
+    .preset-keywords-bar {
+        padding: 8px 10px;
+        gap: 8px;
+    }
+
+    .preset-bar-left {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .preset-tags-list {
+        display: flex;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        padding: 4px 0;
+        gap: 6px;
+        width: 100%;
+    }
+
+    .preset-tags-list::-webkit-scrollbar {
+        display: none;
+    }
+
+    .preset-tag {
+        flex-shrink: 0;
+        padding: 4px 10px;
+        font-size: 11px;
+    }
+
+    .preset-bar-actions {
+        width: 100%;
+        justify-content: space-between;
+        flex-wrap: wrap;
+    }
+
+    /* 5. 结果统计栏与分页控制 */
+    .results-meta-bar {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+        padding: 4px 2px;
+        margin-bottom: 10px;
+    }
+
+    #top-pagination {
+        display: none; /* 移动端隐藏顶部重复分页，直奔商品卡片 */
+    }
+
+    .meta-sub {
+        display: block;
+        margin-left: 0;
+        margin-top: 2px;
+    }
+
+    /* 6. 商品网格：双列精细流式排版 (移动端购物黄金双列) */
+    .products-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+        min-height: 200px;
+    }
+
+    .product-card {
+        border-radius: 10px;
+    }
+
+    .card-media-wrap {
+        padding-top: 90%; /* 更加紧凑均衡的画面 */
+    }
+
+    .card-badges {
+        top: 6px;
+        left: 6px;
+        gap: 3px;
+    }
+
+    .badge-tag {
+        font-size: 9px;
+        padding: 2px 5px;
+    }
+
+    .shop-tag {
+        font-size: 9px;
+        padding: 2px 6px;
+        bottom: 6px;
+        left: 6px;
+    }
+
+    .card-direct-link-hint {
+        font-size: 9px;
+        padding: 2px 6px;
+        top: 6px;
+        right: 6px;
+        opacity: 0.9;
+    }
+
+    .card-content {
+        padding: 8px 8px 10px 8px;
+    }
+
+    .card-cat-path {
+        font-size: 10px;
+        margin-bottom: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .card-title {
+        font-size: 12px;
+        line-height: 1.35;
+        height: 2.7em;
+        -webkit-line-clamp: 2;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+    .card-price-row {
+        margin-top: 6px;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+    }
+
+    .price-main {
+        font-size: 14px;
+        font-weight: 800;
+    }
+
+    .price-tax {
+        font-size: 10px;
+    }
+
+    /* 底部通用分页导航触摸尺寸 */
+    .pagination-footer {
+        margin-top: 18px;
+        padding-bottom: 12px;
+    }
+
+    .pagination-controls {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+
+    .page-btn {
+        min-width: 38px;
+        height: 38px;
+        padding: 4px 8px;
+        font-size: 13px;
+        border-radius: 6px;
+    }
+
+    /* 7. 选项卡 2：后台爬虫看板适配 */
+    .crawler-layout {
+        grid-template-columns: 1fr;
+        gap: 14px;
+    }
+
+    .crawler-card {
+        padding: 14px;
+    }
+
+    .category-tree-selector {
+        max-height: 180px;
+        padding: 8px;
+    }
+
+    .category-tree-selector label {
+        padding: 6px 4px;
+        font-size: 13px;
+    }
+
+    .crawler-btn-group {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+    }
+
+    .crawler-btn-group .btn {
+        width: 100%;
+        justify-content: center;
+        min-height: 42px;
+        font-size: 13px;
+        padding: 8px 6px;
+    }
+
+    .metrics-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+    }
+
+    .metric-item {
+        padding: 10px 6px;
+    }
+
+    .metric-item .m-val {
+        font-size: 16px;
+    }
+
+    .table-scroll {
+        max-height: 200px;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* 8. 选项卡 3：上新监控看板适配 */
+    .monitor-top-bar {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 12px;
+        gap: 10px;
+    }
+
+    .top-bar-left {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+    }
+
+    .top-title {
+        font-size: 14px;
+    }
+
+    .top-bar-actions {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        gap: 8px;
+    }
+
+    .top-bar-actions .btn {
+        width: 100%;
+        justify-content: center;
+        min-height: 38px;
+    }
+
+    .monitor-layout {
+        grid-template-columns: 1fr;
+        gap: 14px;
+    }
+
+    .monitor-card {
+        padding: 14px;
+    }
+
+    .form-row-2 {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+
+    .btn-group-row {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .btn-group-row .btn {
+        width: 100%;
+        justify-content: center;
+        min-height: 40px;
+    }
+
+    .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* 9. 选项卡 4：实时终端日志适配 */
+    .terminal-header {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 10px 12px;
+        gap: 8px;
+    }
+
+    .terminal-tools {
+        flex-wrap: wrap;
+        width: 100%;
+        gap: 8px;
+    }
+
+    .terminal-tools .form-select,
+    .terminal-tools .form-input {
+        flex: 1 1 100%;
+        height: 36px;
+    }
+
+    .terminal-tools .checkbox-inline {
+        font-size: 12px;
+    }
+
+    .terminal-tools #btn-clear-terminal {
+        margin-left: auto;
+        height: 34px;
+    }
+
+    .terminal-body {
+        height: calc(100vh - 250px);
+        min-height: 320px;
+        max-height: 520px;
+        padding: 10px 12px;
+        font-size: 11px;
+        line-height: 1.45;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* 10. 模态弹窗手机端底部抽屉化 (Bottom Sheet) */
+    .modal-overlay {
+        align-items: flex-end;
+        padding: 0;
+    }
+
+    .modal-card {
+        width: 100% !important;
+        max-width: 100% !important;
+        border-radius: 18px 18px 0 0;
+        max-height: 85vh;
+        border-bottom: none;
+        animation: slideUpSheet 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes slideUpSheet {
+        from { transform: translateY(100%); }
+        to { transform: translateY(0); }
+    }
+
+    .modal-header {
+        padding: 14px 16px;
+    }
+
+    .modal-close {
+        padding: 4px 8px;
+        font-size: 26px;
+    }
+
+    .modal-body {
+        padding: 14px 16px;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        gap: 12px;
+    }
+
+    .modal-footer {
+        padding: 12px 16px;
+        position: sticky;
+        bottom: 0;
+        background: #141a29;
+    }
+
+    .modal-footer .btn {
+        flex: 1;
+        justify-content: center;
+        height: 40px;
+    }
+}
+
+/* ==========================================================================
+   超小屏设备精细微调 (Small Mobile, <= 400px)
+   ========================================================================== */
+@media (max-width: 400px) {
+    .products-grid {
+        gap: 8px;
+    }
+    
+    .card-content {
+        padding: 6px;
+    }
+
+    .card-title {
+        font-size: 11px;
+    }
+
+    .price-main {
+        font-size: 13px;
+    }
+}

@@ -2,11 +2,17 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0a0d14">
+    <meta name="format-detection" content="telephone=no">
     <title>Mandarake 【ドール】 专区商品爬虫与自动下单控制中心</title>
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="alternate icon" href="/favicon.ico">
-    <link rel="stylesheet" href="/static/css/style.css?v=2">
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="apple-touch-icon" href="/static/favicon.svg">
+    <link rel="stylesheet" href="/static/css/style.css?v=3">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
@@ -53,120 +59,139 @@
 
     <!-- 主界面布局：选项卡切换 -->
     <main class="app-main">
-        <div class="tabs-nav">
+        <div class="tabs-nav" id="main-tabs-nav">
             <button class="tab-btn active" data-tab="tab-products">
-                <i class="fa-solid fa-cubes"></i> 商品智能阅览中心
+                <i class="fa-solid fa-cubes"></i>
+                <span class="tab-text">商品阅览</span>
             </button>
             <button class="tab-btn" data-tab="tab-crawler">
-                <i class="fa-solid fa-robot"></i> 后台分类爬取控制
+                <i class="fa-solid fa-robot"></i>
+                <span class="tab-text">分类爬虫</span>
             </button>
             <button class="tab-btn" data-tab="tab-monitor">
-                <i class="fa-solid fa-bell"></i> 上新监控与提醒设置
+                <i class="fa-solid fa-bell"></i>
+                <span class="tab-text">上新监控</span>
             </button>
             <button class="tab-btn" data-tab="tab-terminal">
-                <i class="fa-solid fa-terminal"></i> 运行终端实时流
+                <i class="fa-solid fa-terminal"></i>
+                <span class="tab-text">实时终端</span>
             </button>
         </div>
 
         <!-- 选项卡 1: 商品阅览与一键下单中心 -->
         <section class="tab-content active" id="tab-products">
             <!-- 综合多维筛选控制工具栏 -->
-            <div class="filter-panel glass-panel">
-                <div class="filter-row">
-                    <!-- 分类选择器 -->
-                    <div class="filter-group category-select-group">
-                        <label><i class="fa-solid fa-folder-tree"></i> 【ドール】子分类：</label>
-                        <select id="filter-category" class="form-select">
-                            <option value="020114">全部【ドール】商品</option>
-                            <!-- 动态注入各级子分类 -->
-                        </select>
+            <div class="filter-panel glass-panel" id="filter-panel">
+                <!-- 移动端 & PC 搜索及核心触控操作栏 -->
+                <div class="filter-primary-row">
+                    <!-- 关键词搜索 (支持空格多词联合) -->
+                    <div class="search-input-wrap flex-search">
+                        <i class="fa-solid fa-magnifying-glass search-icon"></i>
+                        <input type="text" id="filter-keyword" class="form-input" placeholder="输入关键词匹配 (支持空格多词联合，如: Blythe OF / SDGr)...">
+                        <button class="btn-clear-search" id="btn-clear-keyword" title="清空搜索"><i class="fa-solid fa-xmark"></i></button>
                     </div>
 
-                    <!-- 在库状态选择 -->
-                    <div class="filter-group">
-                        <label><i class="fa-solid fa-boxes-stacked"></i> 在库状态：</label>
+                    <div class="filter-primary-actions">
+                        <button class="btn btn-primary" id="btn-apply-filter">
+                            <i class="fa-solid fa-filter"></i> <span class="btn-text">筛选</span>
+                        </button>
+                        <button type="button" class="btn btn-secondary btn-mobile-filter-toggle" id="btn-toggle-filters" title="展开/收起更多详细筛选条件">
+                            <i class="fa-solid fa-sliders"></i> <span class="toggle-text">更多筛选</span>
+                            <span class="active-filter-badge" id="active-filter-count" style="display: none;">0</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 在库状态选择 (高频触控区) -->
+                <div class="filter-stock-row">
+                    <div class="filter-group stock-filter-wrap">
+                        <label class="filter-label-inline"><i class="fa-solid fa-boxes-stacked"></i> 在库状态：</label>
                         <div class="btn-group-segmented" id="stock-filter-group">
                             <button class="seg-btn active" data-val="">全部商品</button>
                             <button class="seg-btn" data-val="1">🟢 仅在库</button>
                             <button class="seg-btn" data-val="0">🔴 仅售罄</button>
                         </div>
                     </div>
-
-                    <!-- 排序规则 -->
-                    <div class="filter-group">
-                        <label><i class="fa-solid fa-arrow-down-wide-short"></i> 排序方式：</label>
-                        <select id="filter-sort" class="form-select">
-                            <option value="id:desc">商品 ID (从新到旧)</option>
-                            <option value="updated_at:desc">最新同步/更新时间</option>
-                            <option value="price:asc">价格 (从低到高)</option>
-                            <option value="price:desc">价格 (从高到低)</option>
-                            <option value="is_new:desc">优先新着商品</option>
-                        </select>
-                    </div>
                 </div>
 
-                <div class="filter-row second-row">
-                    <!-- 关键词搜索 (支持空格多词联合) -->
-                    <div class="filter-group flex-2">
-                        <div class="search-input-wrap">
-                            <i class="fa-solid fa-magnifying-glass search-icon"></i>
-                            <input type="text" id="filter-keyword" class="form-input" placeholder="输入关键词匹配 (支持空格多词联合 AND 匹配，如: Blythe OF / SDGr)...">
-                            <button class="btn-clear-search" id="btn-clear-keyword" title="清空搜索"><i class="fa-solid fa-xmark"></i></button>
+                <!-- 可折叠的详细筛选区域 (移动端可收起防遮挡，PC 端常驻展开) -->
+                <div class="filter-collapsible-wrap" id="filter-collapsible-wrap">
+                    <div class="filter-row filter-grid-row">
+                        <!-- 分类选择器 -->
+                        <div class="filter-group category-select-group">
+                            <label><i class="fa-solid fa-folder-tree"></i> 【ドール】子分类：</label>
+                            <select id="filter-category" class="form-select">
+                                <option value="020114">全部【ドール】商品</option>
+                                <!-- 动态注入各级子分类 -->
+                            </select>
+                        </div>
+
+                        <!-- 排序规则 -->
+                        <div class="filter-group sort-select-group">
+                            <label><i class="fa-solid fa-arrow-down-wide-short"></i> 排序方式：</label>
+                            <select id="filter-sort" class="form-select">
+                                <option value="id:desc">商品 ID (从新到旧)</option>
+                                <option value="updated_at:desc">最新同步/更新时间</option>
+                                <option value="price:asc">价格 (从低到高)</option>
+                                <option value="price:desc">价格 (从高到低)</option>
+                                <option value="is_new:desc">优先新着商品</option>
+                            </select>
+                        </div>
+
+                        <!-- 排除词 -->
+                        <div class="filter-group flex-1">
+                            <label><i class="fa-solid fa-ban"></i> 排除关键词：</label>
+                            <input type="text" id="filter-exclude" class="form-input" placeholder="排除词 (如: 難あり/ジャンク)">
+                        </div>
+
+                        <!-- 价格区间 -->
+                        <div class="filter-group price-range-group">
+                            <label><i class="fa-solid fa-yen-sign"></i> 价格区间：</label>
+                            <div class="price-inputs-wrap">
+                                <input type="number" id="filter-min-price" class="form-input price-input" placeholder="最低円">
+                                <span class="range-separator">~</span>
+                                <input type="number" id="filter-max-price" class="form-input price-input" placeholder="最高円">
+                            </div>
+                        </div>
+
+                        <!-- 重置按钮 -->
+                        <div class="filter-actions-inline">
+                            <button class="btn btn-secondary" id="btn-reset-filter" title="重置全部筛选条件">
+                                <i class="fa-solid fa-rotate-left"></i> 重置筛选
+                            </button>
                         </div>
                     </div>
 
-                    <!-- 排除词 -->
-                    <div class="filter-group flex-1">
-                        <input type="text" id="filter-exclude" class="form-input" placeholder="排除词 (如: 難あり/ジャンク)">
-                    </div>
-
-                    <!-- 价格区间 -->
-                    <div class="filter-group price-range-group">
-                        <input type="number" id="filter-min-price" class="form-input price-input" placeholder="最低円">
-                        <span class="range-separator">~</span>
-                        <input type="number" id="filter-max-price" class="form-input price-input" placeholder="最高円">
-                    </div>
-
-                    <!-- 操作按钮 -->
-                    <div class="filter-actions">
-                        <button class="btn btn-primary" id="btn-apply-filter">
-                            <i class="fa-solid fa-filter"></i> 筛选商品
-                        </button>
-                        <button class="btn btn-secondary" id="btn-reset-filter" title="重置全部筛选条件">
-                            <i class="fa-solid fa-rotate-left"></i> 重置
-                        </button>
-                    </div>
-                </div>
-
-                <!-- 预设关键词行：支持自定义添加/删除、多选组合与 AND / OR 模式 -->
-                <div class="preset-keywords-bar" id="preset-keywords-container">
-                    <div class="preset-bar-left">
-                        <span class="preset-label"><i class="fa-solid fa-tags"></i> 预设快捷标签：</span>
-                        <div class="preset-mode-group" title="多标签组合逻辑">
-                            <button type="button" class="preset-mode-btn" id="preset-mode-and" data-mode="and" title="选中的标签必须同时满足 (AND 模式)">AND 全部</button>
-                            <button type="button" class="preset-mode-btn active" id="preset-mode-or" data-mode="or" title="选中的标签满足任一即可 (OR 模式)">OR 任一</button>
+                    <!-- 预设关键词行：支持自定义添加/删除、多选组合与 AND / OR 模式 -->
+                    <div class="preset-keywords-bar" id="preset-keywords-container">
+                        <div class="preset-bar-left">
+                            <span class="preset-label"><i class="fa-solid fa-tags"></i> 预设快捷标签：</span>
+                            <div class="preset-mode-group" title="多标签组合逻辑">
+                                <button type="button" class="preset-mode-btn" id="preset-mode-and" data-mode="and" title="选中的标签必须同时满足 (AND 模式)">AND 全部</button>
+                                <button type="button" class="preset-mode-btn active" id="preset-mode-or" data-mode="or" title="选中的标签满足任一即可 (OR 模式)">OR 任一</button>
+                            </div>
                         </div>
-                    </div>
-                    
-                    <div class="preset-tags-list" id="preset-tags-list">
-                        <!-- 动态渲染标签 -->
-                    </div>
-
-                    <div class="preset-bar-actions">
-                        <div class="preset-add-inline" id="preset-add-inline" style="display: none;">
-                            <input type="text" id="input-new-preset" class="form-input" placeholder="输入标签名..." maxlength="20">
-                            <button type="button" class="btn btn-primary btn-xs" id="btn-confirm-add-preset" title="确定添加"><i class="fa-solid fa-check"></i></button>
-                            <button type="button" class="btn btn-secondary btn-xs" id="btn-cancel-add-preset" title="取消"><i class="fa-solid fa-xmark"></i></button>
+                        
+                        <div class="preset-tags-list" id="preset-tags-list">
+                            <!-- 动态渲染标签 -->
                         </div>
-                        <button type="button" class="btn-preset-action" id="btn-add-preset" title="添加新的常用预设关键词">
-                            <i class="fa-solid fa-plus"></i> 添加标签
-                        </button>
-                        <button type="button" class="btn-preset-action text-danger" id="btn-clear-selected-presets" style="display: none;" title="取消选中所有标签">
-                            <i class="fa-solid fa-ban"></i> 清除选中
-                        </button>
-                        <button type="button" class="btn-preset-action" id="btn-reset-presets" title="恢复默认娃类预设标签">
-                            <i class="fa-solid fa-rotate"></i> 恢复默认
-                        </button>
+
+                        <div class="preset-bar-actions">
+                            <div class="preset-add-inline" id="preset-add-inline" style="display: none;">
+                                <input type="text" id="input-new-preset" class="form-input" placeholder="输入标签名..." maxlength="20">
+                                <button type="button" class="btn btn-primary btn-xs" id="btn-confirm-add-preset" title="确定添加"><i class="fa-solid fa-check"></i></button>
+                                <button type="button" class="btn btn-secondary btn-xs" id="btn-cancel-add-preset" title="取消"><i class="fa-solid fa-xmark"></i></button>
+                            </div>
+                            <button type="button" class="btn-preset-action" id="btn-add-preset" title="添加新的常用预设关键词">
+                                <i class="fa-solid fa-plus"></i> 添加标签
+                            </button>
+                            <button type="button" class="btn-preset-action text-danger" id="btn-clear-selected-presets" style="display: none;" title="取消选中所有标签">
+                                <i class="fa-solid fa-ban"></i> 清除选中
+                            </button>
+                            <button type="button" class="btn-preset-action" id="btn-reset-presets" title="恢复默认娃类预设标签">
+                                <i class="fa-solid fa-rotate"></i> 恢复默认
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -651,6 +676,11 @@
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=2"></script>
+    <!-- 移动端悬浮回到顶部按钮 -->
+    <button class="back-to-top-btn" id="btn-back-to-top" title="回到顶部" aria-label="回到顶部">
+        <i class="fa-solid fa-arrow-up"></i>
+    </button>
+
+    <script src="/static/js/app.js?v=3"></script>
 </body>
 </html>
