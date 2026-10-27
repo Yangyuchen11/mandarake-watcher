@@ -1,0 +1,60 @@
+{
+  "port": 5005,
+  "schedule": {
+    "interval_seconds": 60,
+    "retry_count": 5,
+    "retry_delay": 5
+  },
+  "auto_order": {
+    "dry_run": true,
+    "payment_method": "cod",
+    "username": "",
+    "password": ""
+  },
+  "rules": [
+    {
+      "name": "ドール全品上新监控",
+      "category_code": "020114",
+      "keywords": [],
+      "exclude_keywords": [],
+      "max_price": 0,
+      "auto_order": false,
+      "enabled": false,
+      "id": "rule_root_doll"
+    },
+    {
+      "name": "ボークス汎用",
+      "category_code": "02011403",
+      "keywords": [
+        "ボークス"
+      ],
+      "exclude_keywords": [],
+      "match_mode": "or",
+      "max_price": 0,
+      "auto_order": false,
+      "enabled": true,
+      "id": "rule_1793075524"
+    }
+  ],
+  "notifiers": {
+    "sound": {
+      "enabled": true
+    },
+    "desktop": {
+      "enabled": true
+    },
+    "discord": {
+      "enabled": false,
+      "webhook_url": ""
+    },
+    "email": {
+      "enabled": false,
+      "smtp_host": "",
+      "smtp_port": 465,
+      "smtp_user": "",
+      "smtp_password": "",
+      "receiver_email": "",
+      "use_ssl": true
+    }
+  }
+}

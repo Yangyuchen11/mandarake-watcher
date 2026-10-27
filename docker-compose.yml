@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  mandarake-watcher:
+    build: .
+    image: mandarake-watcher:latest
+    container_name: mandarake-watcher
+    restart: unless-stopped
+    ports:
+      - "5005:5005"
+    volumes:
+      - ./data:/app/data
+      - ./config.json:/app/config.json
+    environment:
+      - TZ=Asia/Tokyo
+      - IN_DOCKER=1
+      - HOST=0.0.0.0
+      - PORT=5005

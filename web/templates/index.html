@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mandarake 【ドール】 专区商品爬虫与自动下单控制中心</title>
+    <link rel="stylesheet" href="/static/css/style.css?v=2">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <!-- 顶部状态导航栏 -->
+    <header class="app-header">
+        <div class="header-container">
+            <div class="brand">
+                <i class="fa-solid fa-wand-magic-sparkles brand-icon"></i>
+                <div class="brand-text">
+                    <h1>MANDARAKE <span>DOLL</span></h1>
+                    <p>まんだらけ【ドール】全品类智能爬取 & 自动下单控制系统</p>
+                </div>
+            </div>
+
+            <!-- 全局统计与状态指示灯 -->
+            <div class="header-stats">
+                <div class="stat-pill" title="库内商品总数">
+                    <span class="label">商品总库</span>
+                    <span class="val" id="stat-total">0</span>
+                </div>
+                <div class="stat-pill in-stock" title="当前在库有货商品">
+                    <span class="label">在库有货</span>
+                    <span class="val" id="stat-stock">0</span>
+                </div>
+                <div class="stat-pill sold-out" title="已售罄商品">
+                    <span class="label">已售罄</span>
+                    <span class="val" id="stat-sold">0</span>
+                </div>
+                <div class="stat-pill new-tag" title="新着商品">
+                    <span class="label">新着</span>
+                    <span class="val" id="stat-new">0</span>
+                </div>
+            </div>
+
+            <!-- 会员登录态与模式切换 -->
+            <div class="header-actions">
+                <div class="auth-indicator" id="auth-status-pill">
+                    <span class="status-dot disconnected"></span>
+                    <span class="auth-text" id="auth-text">未登录帐号</span>
+                </div>
+
+                <div class="mode-badge-wrap" title="点击切换实盘或测试模式">
+                    <label class="switch-toggle">
+                        <input type="checkbox" id="dry-run-toggle" checked>
+                        <span class="slider"></span>
+                    </label>
+                    <span class="mode-label" id="mode-label-text">🛡️ 仿真测试 (Dry-Run)</span>
+                </div>
+
+                <button class="btn btn-outline" id="btn-open-account-modal">
+                    <i class="fa-solid fa-user-gear"></i> 帐号管理
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主界面布局：选项卡切换 -->
+    <main class="app-main">
+        <div class="tabs-nav">
+            <button class="tab-btn active" data-tab="tab-products">
+                <i class="fa-solid fa-cubes"></i> 商品智能阅览中心
+            </button>
+            <button class="tab-btn" data-tab="tab-crawler">
+                <i class="fa-solid fa-robot"></i> 后台分类爬取控制
+            </button>
+            <button class="tab-btn" data-tab="tab-monitor">
+                <i class="fa-solid fa-bell"></i> 上新监控与提醒设置
+            </button>
+            <button class="tab-btn" data-tab="tab-orders">
+                <i class="fa-solid fa-receipt"></i> 下单与购买记录
+                <span class="badge" id="orders-count-badge">0</span>
+            </button>
+            <button class="tab-btn" data-tab="tab-terminal">
+                <i class="fa-solid fa-terminal"></i> 运行终端实时流
+            </button>
+        </div>
+
+        <!-- 选项卡 1: 商品阅览与一键下单中心 -->
+        <section class="tab-content active" id="tab-products">
+            <!-- 综合多维筛选控制工具栏 -->
+            <div class="filter-panel glass-panel">
+                <div class="filter-row">
+                    <!-- 分类选择器 -->
+                    <div class="filter-group category-select-group">
+                        <label><i class="fa-solid fa-folder-tree"></i> 【ドール】子分类：</label>
+                        <select id="filter-category" class="form-select">
+                            <option value="020114">全部【ドール】商品</option>
+                            <!-- 动态注入各级子分类 -->
+                        </select>
+                    </div>
+
+                    <!-- 在库状态选择 -->
+                    <div class="filter-group">
+                        <label><i class="fa-solid fa-boxes-stacked"></i> 在库状态：</label>
+                        <div class="btn-group-segmented" id="stock-filter-group">
+                            <button class="seg-btn active" data-val="">全部商品</button>
+                            <button class="seg-btn" data-val="1">🟢 仅在库</button>
+                            <button class="seg-btn" data-val="0">🔴 仅售罄</button>
+                        </div>
+                    </div>
+
+                    <!-- 排序规则 -->
+                    <div class="filter-group">
+                        <label><i class="fa-solid fa-arrow-down-wide-short"></i> 排序方式：</label>
+                        <select id="filter-sort" class="form-select">
+                            <option value="id:desc">商品 ID (从新到旧)</option>
+                            <option value="updated_at:desc">最新同步/更新时间</option>
+                            <option value="price:asc">价格 (从低到高)</option>
+                            <option value="price:desc">价格 (从高到低)</option>
+                            <option value="is_new:desc">优先新着商品</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="filter-row second-row">
+                    <!-- 关键词搜索 (支持空格多词联合) -->
+                    <div class="filter-group flex-2">
+                        <div class="search-input-wrap">
+                            <i class="fa-solid fa-magnifying-glass search-icon"></i>
+                            <input type="text" id="filter-keyword" class="form-input" placeholder="输入关键词匹配 (支持空格多词联合 AND 匹配，如: Blythe OF / SDGr)...">
+                            <button class="btn-clear-search" id="btn-clear-keyword" title="清空搜索"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
+                    </div>
+
+                    <!-- 排除词 -->
+                    <div class="filter-group flex-1">
+                        <input type="text" id="filter-exclude" class="form-input" placeholder="排除词 (如: 難あり/ジャンク)">
+                    </div>
+
+                    <!-- 价格区间 -->
+                    <div class="filter-group price-range-group">
+                        <input type="number" id="filter-min-price" class="form-input price-input" placeholder="最低円">
+                        <span class="range-separator">~</span>
+                        <input type="number" id="filter-max-price" class="form-input price-input" placeholder="最高円">
+                    </div>
+
+                    <!-- 操作按钮 -->
+                    <div class="filter-actions">
+                        <button class="btn btn-primary" id="btn-apply-filter">
+                            <i class="fa-solid fa-filter"></i> 筛选商品
+                        </button>
+                        <button class="btn btn-secondary" id="btn-reset-filter" title="重置全部筛选条件">
+                            <i class="fa-solid fa-rotate-left"></i> 重置
+                        </button>
+                        <button class="btn btn-info" id="btn-reclassify-cats" title="根据标题特征自动将商品归整到精确三级分类中">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> 智能归整细分
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 预设关键词行：支持自定义添加/删除、多选组合与 AND / OR 模式 -->
+                <div class="preset-keywords-bar" id="preset-keywords-container">
+                    <div class="preset-bar-left">
+                        <span class="preset-label"><i class="fa-solid fa-tags"></i> 预设快捷标签：</span>
+                        <div class="preset-mode-group" title="多标签组合逻辑">
+                            <button type="button" class="preset-mode-btn" id="preset-mode-and" data-mode="and" title="选中的标签必须同时满足 (AND 模式)">AND 全部</button>
+                            <button type="button" class="preset-mode-btn active" id="preset-mode-or" data-mode="or" title="选中的标签满足任一即可 (OR 模式)">OR 任一</button>
+                        </div>
+                    </div>
+                    
+                    <div class="preset-tags-list" id="preset-tags-list">
+                        <!-- 动态渲染标签 -->
+                    </div>
+
+                    <div class="preset-bar-actions">
+                        <div class="preset-add-inline" id="preset-add-inline" style="display: none;">
+                            <input type="text" id="input-new-preset" class="form-input" placeholder="输入标签名..." maxlength="20">
+                            <button type="button" class="btn btn-primary btn-xs" id="btn-confirm-add-preset" title="确定添加"><i class="fa-solid fa-check"></i></button>
+                            <button type="button" class="btn btn-secondary btn-xs" id="btn-cancel-add-preset" title="取消"><i class="fa-solid fa-xmark"></i></button>
+                        </div>
+                        <button type="button" class="btn-preset-action" id="btn-add-preset" title="添加新的常用预设关键词">
+                            <i class="fa-solid fa-plus"></i> 添加标签
+                        </button>
+                        <button type="button" class="btn-preset-action text-danger" id="btn-clear-selected-presets" style="display: none;" title="取消选中所有标签">
+                            <i class="fa-solid fa-ban"></i> 清除选中
+                        </button>
+                        <button type="button" class="btn-preset-action" id="btn-reset-presets" title="恢复默认娃类预设标签">
+                            <i class="fa-solid fa-rotate"></i> 恢复默认
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 分页与统计提示栏 -->
+            <div class="results-meta-bar">
+                <div class="meta-left">
+                    <span>找到 <strong id="query-total-count">0</strong> 件符合条件的商品</span>
+                    <span class="meta-sub" id="query-condition-summary"></span>
+                </div>
+                <div class="meta-right pagination-controls" id="top-pagination">
+                    <!-- 动态分页按纽 -->
+                </div>
+            </div>
+
+            <!-- 商品卡片栅格网格 -->
+            <div class="products-grid" id="products-container">
+                <!-- 动态渲染商品卡片 -->
+                <div class="empty-placeholder">
+                    <i class="fa-solid fa-box-open empty-icon"></i>
+                    <p>正在加载商品档案或暂未爬取数据...</p>
+                    <button class="btn btn-primary" id="btn-quick-goto-crawler">前往后台启动爬虫抓取</button>
+                </div>
+            </div>
+
+            <!-- 底部通用分页导航 -->
+            <div class="pagination-footer">
+                <div class="pagination-controls" id="bottom-pagination"></div>
+            </div>
+        </section>
+
+        <!-- 选项卡 2: 后台分类爬取控制看板 -->
+        <section class="tab-content" id="tab-crawler">
+            <div class="crawler-layout">
+                <!-- 左侧：爬虫任务配置与启动卡片 -->
+                <div class="crawler-card glass-panel">
+                    <div class="card-head">
+                        <h3><i class="fa-solid fa-sliders"></i> 分类爬取设置</h3>
+                        <span class="tag-status" id="crawler-live-tag">就绪</span>
+                    </div>
+
+                    <div class="card-body">
+                        <div class="form-group">
+                            <label>选择目标分类：</label>
+                            <div class="category-tree-selector" id="crawler-cat-selection-list">
+                                <!-- 动态加载可选二级分类多选框 -->
+                            </div>
+                            <div class="selector-actions">
+                                <button class="btn-link" id="btn-select-all-cats">全选</button>
+                                <span class="sep">|</span>
+                                <button class="btn-link" id="btn-unselect-all-cats">清空</button>
+                            </div>
+                        </div>
+
+                        <div class="form-group form-check-wrap">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="crawl-stock-only">
+                                <span>仅爬取当前在库商品 (勾选仅抓取在库有货；若需要查看或归档全部售罄商品，请取消勾选)</span>
+                            </label>
+                        </div>
+
+                        <div class="form-group">
+                            <label>单分类最大爬取页数 (留空为爬完该分类所有数据)：</label>
+                            <input type="number" id="crawl-max-pages" class="form-input" placeholder="例如: 5 (测试用) 或 留空无限制">
+                        </div>
+
+                        <div class="crawler-btn-group">
+                            <button class="btn btn-success btn-lg" id="btn-start-crawl">
+                                <i class="fa-solid fa-play"></i> 启动全量爬取
+                            </button>
+                            <button class="btn btn-warning" id="btn-pause-crawl" disabled>
+                                <i class="fa-solid fa-pause"></i> 暂停
+                            </button>
+                            <button class="btn btn-info" id="btn-resume-crawl" disabled>
+                                <i class="fa-solid fa-forward"></i> 继续
+                            </button>
+                            <button class="btn btn-danger" id="btn-stop-crawl" disabled>
+                                <i class="fa-solid fa-stop"></i> 中止任务
+                            </button>
+                        </div>
+
+                        <div class="crawler-sync-box" style="margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--border-color);">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <label style="font-weight: 600; font-size: 0.9rem; color: var(--text-primary);"><i class="fa-solid fa-clock-rotate-left"></i> 每日库存与售罄自动同步</label>
+                                <span class="badge-tag stock" style="font-size: 0.75rem;">每日 05:00 自动巡检</span>
+                            </div>
+                            <button class="btn btn-secondary btn-block" id="btn-trigger-daily-sync" style="width: 100%; justify-content: center;" title="即时测试或执行全量细分分类最新售罄与库存核验">
+                                <i class="fa-solid fa-rotate"></i> 即时触发每日05:00库存与售罄巡检
+                            </button>
+                            <small class="text-muted" id="daily-sync-status-text" style="display: block; margin-top: 6px; font-size: 0.8rem;">状态: 每日凌晨 05:00 自动调度执行，保持全量数据与官网售罄同步。</small>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右侧：实时进度与监控卡片 -->
+                <div class="crawler-card glass-panel">
+                    <div class="card-head">
+                        <h3><i class="fa-solid fa-chart-line"></i> 抓取进度与运行看板</h3>
+                    </div>
+
+                    <div class="card-body">
+                        <!-- 动态进度条 -->
+                        <div class="progress-box">
+                            <div class="progress-info">
+                                <span class="current-task" id="crawl-status-msg">爬虫未运行</span>
+                                <span class="percent" id="crawl-percent-text">0%</span>
+                            </div>
+                            <div class="progress-track">
+                                <div class="progress-bar-fill" id="crawl-progress-fill" style="width: 0%;"></div>
+                            </div>
+                        </div>
+
+                        <div class="metrics-grid">
+                            <div class="metric-item">
+                                <span class="m-val" id="m-current-cat">-</span>
+                                <span class="m-lbl">当前分类</span>
+                            </div>
+                            <div class="metric-item">
+                                <span class="m-val" id="m-current-page">0</span>
+                                <span class="m-lbl">当前页码</span>
+                            </div>
+                            <div class="metric-item">
+                                <span class="m-val" id="m-total-crawled">0</span>
+                                <span class="m-lbl">本轮已抓取</span>
+                            </div>
+                            <div class="metric-item">
+                                <span class="m-val" id="m-new-crawled">0</span>
+                                <span class="m-lbl">新入库商品</span>
+                            </div>
+                            <div class="metric-item">
+                                <span class="m-val" id="m-elapsed-time">0s</span>
+                                <span class="m-lbl">已运行耗时</span>
+                            </div>
+                        </div>
+
+                        <!-- 各子分类归档历史状态明细 -->
+                        <div class="subcat-progress-table-wrap">
+                            <h4><i class="fa-solid fa-list-check"></i> 各分类已归档概览</h4>
+                            <div class="table-scroll">
+                                <table class="custom-table" id="table-cat-progress">
+                                    <thead>
+                                        <tr>
+                                            <th>代码</th>
+                                            <th>分类名称</th>
+                                            <th>已收录总数</th>
+                                            <th>在库商品</th>
+                                            <th>状态</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tbody-cat-progress">
+                                        <!-- 动态插入 -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="card-footer-actions">
+                            <button class="btn btn-outline-danger btn-sm" id="btn-clear-db">
+                                <i class="fa-solid fa-trash-can"></i> 清空全部商品数据库
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 选项卡: 上新监控与提醒设置 -->
+        <section class="tab-content" id="tab-monitor">
+            <div class="monitor-top-bar glass-panel">
+                <div class="top-bar-left">
+                    <span class="status-indicator-dot" id="sched-status-dot"></span>
+                    <span class="top-title" id="sched-status-title">监控调度器正在运行</span>
+                    <span class="top-meta" id="sched-status-meta">上次检测: 从未 | 累计轮次: 0 | 累计命中: 0</span>
+                </div>
+                <div class="top-bar-actions">
+                    <button class="btn btn-primary btn-sm" id="btn-monitor-check-now">
+                        <i class="fa-solid fa-magnifying-glass"></i> 立即巡检一次
+                    </button>
+                    <button class="btn btn-warning btn-sm" id="btn-monitor-burst">
+                        <i class="fa-solid fa-bolt"></i> 启动3分钟高频爆发
+                    </button>
+                    <button class="btn btn-secondary btn-sm" id="btn-monitor-baseline" title="将当前库存设为基准线，避免初次启动把老库存当作上新报警">
+                        <i class="fa-solid fa-flag-checkered"></i> 录入当前库存为基准线
+                    </button>
+                </div>
+            </div>
+
+            <div class="monitor-layout">
+                <!-- 左栏：扫描频率/重试 + 通知渠道 -->
+                <div class="monitor-col-left">
+                    <!-- 调度与重试参数卡片 -->
+                    <div class="glass-panel monitor-card">
+                        <div class="card-head">
+                            <h3><i class="fa-solid fa-clock"></i> 扫描频率与重试参数</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-group">
+                                <label>日常巡检扫描间隔 (秒)：</label>
+                                <div class="input-with-unit">
+                                    <input type="number" id="cfg-interval-seconds" class="form-input" min="3" value="60">
+                                    <span class="unit">秒</span>
+                                </div>
+                                <small class="text-muted">到达该间隔自动对所有启用的关键词规则执行一次有货检测</small>
+                            </div>
+
+                            <div class="form-row-2">
+                                <div class="form-group">
+                                    <label>扫描失败重试次数：</label>
+                                    <div class="input-with-unit">
+                                        <input type="number" id="cfg-retry-count" class="form-input" min="0" max="10" value="3">
+                                        <span class="unit">次</span>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label>重试等待间隔：</label>
+                                    <div class="input-with-unit">
+                                        <input type="number" id="cfg-retry-delay" class="form-input" min="1" max="60" value="5">
+                                        <span class="unit">秒</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <small class="text-muted">遭遇网络抖动或官网繁忙状态码 (429/503) 时自动重试，避免漏报</small>
+
+                            <button class="btn btn-primary btn-block mt-3" id="btn-save-schedule-cfg">
+                                <i class="fa-solid fa-floppy-disk"></i> 保存调度与重试设置
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 邮件推送设置 (SMTP) -->
+                    <div class="glass-panel monitor-card mt-3">
+                        <div class="card-head">
+                            <h3><i class="fa-solid fa-envelope"></i> 邮箱邮件提醒 (SMTP)</h3>
+                            <label class="switch-toggle" title="启用/禁用邮件提醒">
+                                <input type="checkbox" id="cfg-email-enabled">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-group">
+                                <label>SMTP 服务器地址：</label>
+                                <input type="text" id="cfg-email-host" class="form-input" placeholder="例如: smtp.qq.com 或 smtp.163.com">
+                            </div>
+
+                            <div class="form-row-2">
+                                <div class="form-group">
+                                    <label>SMTP 端口：</label>
+                                    <input type="number" id="cfg-email-port" class="form-input" value="465">
+                                </div>
+                                <div class="form-group form-check-wrap pt-4">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="cfg-email-ssl" checked>
+                                        <span>启用 SSL 加密</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label>发件人邮箱账号：</label>
+                                <input type="text" id="cfg-email-user" class="form-input" placeholder="例如: your_account@qq.com">
+                            </div>
+
+                            <div class="form-group">
+                                <label>发件人邮箱密码 / 授权码：</label>
+                                <input type="password" id="cfg-email-password" class="form-input" placeholder="第三方授权客户端专用密码">
+                            </div>
+
+                            <div class="form-group">
+                                <label>接收提醒邮箱 (留空默认发至自身账号)：</label>
+                                <input type="text" id="cfg-email-receiver" class="form-input" placeholder="例如: target_notify@gmail.com">
+                            </div>
+
+                            <div class="btn-group-row mt-3">
+                                <button class="btn btn-outline" id="btn-test-email">
+                                    <i class="fa-solid fa-paper-plane"></i> 发送测试邮件
+                                </button>
+                                <button class="btn btn-primary" id="btn-save-email-cfg">
+                                    <i class="fa-solid fa-floppy-disk"></i> 保存邮箱配置
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Discord Webhook 卡片 -->
+                    <div class="glass-panel monitor-card mt-3">
+                        <div class="card-head">
+                            <h3><i class="fa-brands fa-discord"></i> Discord Webhook 提醒</h3>
+                            <label class="switch-toggle" title="启用/禁用 Discord 提醒">
+                                <input type="checkbox" id="cfg-discord-enabled">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-group">
+                                <label>Discord Webhook URL：</label>
+                                <input type="text" id="cfg-discord-webhook" class="form-input" placeholder="https://discord.com/api/webhooks/...">
+                            </div>
+
+                            <div class="btn-group-row mt-3">
+                                <button class="btn btn-outline" id="btn-test-discord">
+                                    <i class="fa-solid fa-vial"></i> 发送测试卡片
+                                </button>
+                                <button class="btn btn-primary" id="btn-save-discord-cfg">
+                                    <i class="fa-solid fa-floppy-disk"></i> 保存 Webhook
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 声音与桌面弹窗开关 -->
+                    <div class="glass-panel monitor-card mt-3">
+                        <div class="card-head">
+                            <h3><i class="fa-solid fa-volume-high"></i> 本地声音与桌面通知</h3>
+                        </div>
+                        <div class="card-body notify-toggles-grid">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="cfg-sound-enabled" checked>
+                                <span>发现商品时播放多音阶清脆提示音</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="cfg-desktop-enabled" checked>
+                                <span>Windows 桌面右下角原生气泡弹窗 (点击直达商品页)</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右栏：关键词监控规则列表 -->
+                <div class="monitor-col-right">
+                    <div class="glass-panel monitor-card">
+                        <div class="card-head">
+                            <div>
+                                <h3><i class="fa-solid fa-tags"></i> 关键词监控规则清单</h3>
+                                <p class="subtitle">只有命中了关键词规则并且处于在库有货状态的新商品，才会触发推送与自动下单</p>
+                            </div>
+                            <button class="btn btn-success btn-sm" id="btn-open-add-rule">
+                                <i class="fa-solid fa-plus"></i> 添加监控规则
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="custom-table" id="table-rules">
+                                    <thead>
+                                        <tr>
+                                            <th>规则名称</th>
+                                            <th>监控分类</th>
+                                            <th>匹配关键词 (AND/OR)</th>
+                                            <th>排除关键词</th>
+                                            <th>价格上限</th>
+                                            <th>关联自动下单</th>
+                                            <th>状态</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tbody-rules">
+                                        <!-- 动态插入规则行 -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 选项卡 4: 下单与购买记录 -->
+        <section class="tab-content" id="tab-orders">
+            <div class="glass-panel orders-panel">
+                <div class="panel-header">
+                    <div>
+                        <h3><i class="fa-solid fa-clock-rotate-left"></i> 订单与购买记录</h3>
+                        <p class="subtitle">记录通过本软件执行的一键下单与自动下单记录（包含仿真 Dry-Run 与实盘下单明细）</p>
+                    </div>
+                    <div class="header-btns">
+                        <button class="btn btn-outline" id="btn-refresh-orders"><i class="fa-solid fa-rotate-right"></i> 刷新</button>
+                        <button class="btn btn-outline-danger" id="btn-clear-orders"><i class="fa-solid fa-trash-can"></i> 清空记录</button>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="custom-table orders-table">
+                        <thead>
+                            <tr>
+                                <th>下单时间</th>
+                                <th>商品信息</th>
+                                <th>价格</th>
+                                <th>发送店舗</th>
+                                <th>触发方式</th>
+                                <th>执行模式 / 状态</th>
+                                <th>反馈信息 / 耗时</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbody-orders">
+                            <tr><td colspan="8" class="text-center">暂无下单记录</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- 选项卡 4: 实时终端日志 -->
+        <section class="tab-content" id="tab-terminal">
+            <div class="terminal-panel glass-panel">
+                <div class="terminal-header">
+                    <div class="terminal-title">
+                        <span class="terminal-dot red"></span>
+                        <span class="terminal-dot yellow"></span>
+                        <span class="terminal-dot green"></span>
+                        <span class="title-text">Mandarake 实时控制台输出 (SSE 流)</span>
+                    </div>
+
+                    <div class="terminal-tools">
+                        <select id="terminal-level-select" class="form-select form-select-sm">
+                            <option value="ALL">全部级别 (ALL)</option>
+                            <option value="INFO" selected>INFO 及以上</option>
+                            <option value="WARNING">WARNING 警告</option>
+                            <option value="ERROR">ERROR 错误</option>
+                        </select>
+                        <input type="text" id="terminal-search" class="form-input form-input-sm" placeholder="过滤终端日志...">
+                        <label class="checkbox-inline">
+                            <input type="checkbox" id="terminal-autoscroll" checked>
+                            <span>自动滚屏</span>
+                        </label>
+                        <button class="btn btn-sm btn-secondary" id="btn-clear-terminal">
+                            <i class="fa-solid fa-eraser"></i> 清屏
+                        </button>
+                    </div>
+                </div>
+
+                <div class="terminal-body" id="terminal-output-container">
+                    <!-- 实时日志行输出 -->
+                    <div class="log-line info">[SYS] 控制台就绪，正在接收后台系统事件...</div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- 模态弹窗：帐号登录与会话管理 -->
+    <div class="modal-overlay" id="account-modal">
+        <div class="modal-card glass-panel">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-user-lock"></i> Mandarake 帐号登录与配置</h3>
+                <button class="modal-close" id="btn-close-account-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="account-status-card">
+                    <div class="status-icon-wrap" id="modal-status-icon">
+                        <i class="fa-solid fa-user-shield"></i>
+                    </div>
+                    <div class="status-details">
+                        <h4 id="modal-account-title">未登录帐号</h4>
+                        <p id="modal-account-desc">登录后即可启用一键快速下单与定点自动抢购功能</p>
+                    </div>
+                </div>
+
+                <div class="login-tabs">
+                    <div class="login-tab-head">
+                        <button class="subtab-btn active" data-subtab="subtab-browser">
+                            <i class="fa-brands fa-chrome"></i> 推荐：一键浏览器登录
+                        </button>
+                        <button class="subtab-btn" data-subtab="subtab-cookie">
+                            <i class="fa-solid fa-cookie-bite"></i> Cookie 导入
+                        </button>
+                        <button class="subtab-btn" data-subtab="subtab-settings">
+                            <i class="fa-solid fa-gear"></i> 下单参数设置
+                        </button>
+                    </div>
+
+                    <!-- 子 Tab 1: 浏览器唤起登录 -->
+                    <div class="subtab-pane active" id="subtab-browser">
+                        <p class="guide-text">
+                            点击下方按钮将自动唤起您电脑中的 Chrome/Edge 浏览器并进入官网登录页面。在浏览器中输入帐号密码完成登录后，点击<strong>【一键同步会话】</strong>即可将登录态自动无缝同步至本系统！
+                        </p>
+                        <div class="browser-actions">
+                            <button class="btn btn-primary btn-lg" id="btn-launch-browser">
+                                <i class="fa-brands fa-chrome"></i> 1. 唤起浏览器登录窗口
+                            </button>
+                            <button class="btn btn-success btn-lg" id="btn-sync-browser">
+                                <i class="fa-solid fa-arrows-rotate"></i> 2. 登录后点击此处同步会话
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 子 Tab 2: 手动 Cookie 导入 -->
+                    <div class="subtab-pane" id="subtab-cookie">
+                        <p class="guide-text">
+                            直接粘贴您在浏览器中登录后获取的 Mandarake Cookie 字符串 (包含 tr_mndrk_user 或 JSESSIONID)：
+                        </p>
+                        <textarea id="cookie-input-area" class="form-textarea" rows="4" placeholder="例如: tr_mndrk_user=4a9da059.65ec8ef56fd49; ..."></textarea>
+                        <button class="btn btn-primary" id="btn-save-cookie-str">
+                            <i class="fa-solid fa-floppy-disk"></i> 保存并验证 Cookie
+                        </button>
+                    </div>
+
+                    <!-- 子 Tab 3: 下单参数设置 -->
+                    <div class="subtab-pane" id="subtab-settings">
+                        <div class="form-group">
+                            <label>默认支付方式 (若选择代金引换将在送货上门时现金付款)：</label>
+                            <select id="checkout-payment-method" class="form-select">
+                                <option value="cod">代金引換 (货到付款 - 最稳妥快捷，推荐)</option>
+                                <option value="bank">銀行振込 (银行转账)</option>
+                                <option value="store">店頭支払 (指定门店自提付款)</option>
+                                <option value="cc">クレジットカード (已绑定的信用卡)</option>
+                            </select>
+                        </div>
+                        <div class="form-group form-check-wrap">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="cfg-dry-run-check" checked>
+                                <span><strong>开启 Dry-Run 仿真演练测试</strong>（强烈建议：走通加购结算全流程，在最终提交前拦截，确保安全不产生实际扣款）</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger" id="btn-account-logout">
+                    <i class="fa-solid fa-right-from-bracket"></i> 退出当前帐号
+                </button>
+                <button class="btn btn-secondary" id="btn-modal-close-footer">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 模态弹窗：一键下单确认弹窗 -->
+    <div class="modal-overlay" id="order-confirm-modal">
+        <div class="modal-card glass-panel order-modal">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-cart-shopping"></i> 确认下单</h3>
+                <button class="modal-close" id="btn-close-order-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="order-preview-card">
+                    <img id="order-item-img" src="" alt="预览图" class="order-img">
+                    <div class="order-info">
+                        <h4 id="order-item-title"></h4>
+                        <div class="price-line">
+                            <span class="price-val" id="order-item-price"></span>
+                            <span class="shop-badge" id="order-item-shop"></span>
+                        </div>
+                        <p class="order-meta-info" id="order-item-id"></p>
+                    </div>
+                </div>
+
+                <div class="order-warning" id="order-mode-warning">
+                    <i class="fa-solid fa-shield-halved"></i>
+                    <span>当前处于 <strong>Dry-Run 仿真测试模式</strong>，将模拟执行加购与结算，在最终扣款前自动拦截并清空测试购物车，<strong>不会产生任何费用</strong>。</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-cancel-order">取消</button>
+                <button class="btn btn-primary" id="btn-do-order-submit">
+                    <i class="fa-solid fa-bolt"></i> 立即执行下单
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 模态弹窗：添加 / 编辑关键词监控规则 -->
+    <div class="modal-overlay" id="rule-modal">
+        <div class="modal-card glass-panel" style="width: 540px;">
+            <div class="modal-header">
+                <h3 id="rule-modal-title"><i class="fa-solid fa-plus-circle"></i> 添加关键词监控规则</h3>
+                <button class="modal-close" id="btn-close-rule-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="modal-rule-id">
+
+                <div class="form-group">
+                    <label>规则名称：</label>
+                    <input type="text" id="modal-rule-name" class="form-input" placeholder="例如: 幼SD/SDGr 精准捡漏">
+                </div>
+
+                <div class="form-group">
+                    <label>监控分类：</label>
+                    <select id="modal-rule-cat" class="form-select">
+                        <option value="020114">全部【ドール】大分类</option>
+                        <!-- 动态填充子分类 -->
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>包含关键词 (多个词以空格隔开)：</label>
+                    <input type="text" id="modal-rule-keywords" class="form-input" placeholder="例如: 幼SD はな 或 Blythe">
+                </div>
+
+                <div class="form-group">
+                    <label>多词匹配模式：</label>
+                    <div class="btn-group-segmented" id="modal-rule-mode-group">
+                        <button class="seg-btn active" data-mode="and">AND 模式 (所有关键词同时包含)</button>
+                        <button class="seg-btn" data-mode="or">OR 模式 (满足其一即可)</button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>排除关键词 (多个词以空格隔开)：</label>
+                    <input type="text" id="modal-rule-exclude" class="form-input" placeholder="例如: 難あり ジャンク">
+                </div>
+
+                <div class="form-group">
+                    <label>最高限价 (円，留空或0为不限价格)：</label>
+                    <input type="number" id="modal-rule-max-price" class="form-input" placeholder="例如: 50000">
+                </div>
+
+                <div class="form-group form-check-wrap">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="modal-rule-auto-order">
+                        <span><strong>⚡ 发现即自动触发下单</strong> (与自动下单引擎联动，遵循当前 Dry-Run 或实盘模式)</span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-cancel-rule-modal">取消</button>
+                <button class="btn btn-primary" id="btn-save-rule-modal">
+                    <i class="fa-solid fa-check"></i> 保存并启用规则
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js?v=2"></script>
+</body>
+</html>
