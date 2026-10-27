@@ -358,7 +358,7 @@
                         <i class="fa-solid fa-magnifying-glass"></i> 立即巡检一次
                     </button>
                     <button class="btn btn-warning btn-sm" id="btn-monitor-burst">
-                        <i class="fa-solid fa-bolt"></i> 启动3分钟高频爆发
+                        <i class="fa-solid fa-bolt"></i> 启动高频爆发
                     </button>
                     <button class="btn btn-secondary btn-sm" id="btn-monitor-baseline" title="将当前库存设为基准线，避免初次启动把老库存当作上新报警">
                         <i class="fa-solid fa-flag-checkered"></i> 录入当前库存为基准线
@@ -388,19 +388,56 @@
                                 <div class="form-group">
                                     <label>扫描失败重试次数：</label>
                                     <div class="input-with-unit">
-                                        <input type="number" id="cfg-retry-count" class="form-input" min="0" max="10" value="3">
+                                        <input type="number" id="cfg-retry-count" class="form-input" min="0" max="20" value="3">
                                         <span class="unit">次</span>
                                     </div>
                                 </div>
                                 <div class="form-group">
-                                    <label>重试等待间隔：</label>
+                                    <label>日常重试等待间隔：</label>
                                     <div class="input-with-unit">
-                                        <input type="number" id="cfg-retry-delay" class="form-input" min="1" max="60" value="5">
+                                        <input type="number" id="cfg-retry-delay" class="form-input" min="0.5" max="60" step="0.5" value="5">
                                         <span class="unit">秒</span>
                                     </div>
                                 </div>
                             </div>
-                            <small class="text-muted">遭遇网络抖动或官网繁忙状态码 (429/503) 时自动重试，避免漏报</small>
+                            <small class="text-muted">日常巡检遭遇网络抖动或官网繁忙状态码 (429/503) 时自动重试</small>
+
+                            <!-- 高频爆发模式参数 -->
+                            <div style="margin: 14px 0 10px 0; border-top: 1px dashed rgba(255,255,255,0.12); padding-top: 10px;">
+                                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                                    <strong style="color: #f59e0b; font-size: 0.88rem;">
+                                        <i class="fa-solid fa-bolt"></i> 高频爆发模式参数
+                                    </strong>
+                                    <span style="font-size: 0.72rem; padding: 2px 6px; border-radius: 4px; background: rgba(245,158,11,0.15); color: #f59e0b;">抢购期专用</span>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label>高频爆发持续时间 (分钟)：</label>
+                                <div class="input-with-unit">
+                                    <input type="number" id="cfg-burst-duration" class="form-input" min="1" max="120" value="3">
+                                    <span class="unit">分钟</span>
+                                </div>
+                                <small class="text-muted">启动高频爆发后持续高速抢刷的时长，到期后自动恢复日常巡检</small>
+                            </div>
+
+                            <div class="form-row-2">
+                                <div class="form-group">
+                                    <label>爆发期间扫描间隔：</label>
+                                    <div class="input-with-unit">
+                                        <input type="number" id="cfg-burst-interval" class="form-input" min="0.5" max="60" step="0.5" value="2">
+                                        <span class="unit">秒</span>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label>失败重试间隔：</label>
+                                    <div class="input-with-unit">
+                                        <input type="number" id="cfg-burst-retry-delay" class="form-input" min="0.1" max="10" step="0.1" value="1">
+                                        <span class="unit">秒</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <small class="text-muted">高频爆发期间采用更紧凑的扫描与重试间隔，毫秒级抢占新上架</small>
 
                             <button class="btn btn-primary btn-block mt-3" id="btn-save-schedule-cfg">
                                 <i class="fa-solid fa-floppy-disk"></i> 保存调度与重试设置
@@ -531,13 +568,6 @@
         <section class="tab-content" id="tab-terminal">
             <div class="terminal-panel glass-panel">
                 <div class="terminal-header">
-                    <div class="terminal-title">
-                        <span class="terminal-dot red"></span>
-                        <span class="terminal-dot yellow"></span>
-                        <span class="terminal-dot green"></span>
-                        <span class="title-text">Mandarake 实时控制台输出 (SSE 流)</span>
-                    </div>
-
                     <div class="terminal-tools">
                         <select id="terminal-level-select" class="form-select form-select-sm">
                             <option value="ALL">全部级别 (ALL)</option>

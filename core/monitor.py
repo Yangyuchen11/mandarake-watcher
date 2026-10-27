@@ -27,6 +27,7 @@ class MandarakeMonitor:
         self.notifier_mgr = notifier_mgr
         self.scraper = MandarakeScraper()
         self.db = archive_db
+        self.scheduler = None
 
         self.seen_ids: Set[str] = set()
         self.load_seen_cache()
@@ -49,6 +50,18 @@ class MandarakeMonitor:
             except Exception as e:
                 logger.warning(f"读取已扫描缓存失败: {e}")
 
+        # 若缓存文件为空或未初始化，尝试从本地归档数据库自动同步在库商品，避免重启或初次运行时将已有库存当作新品
+        if not self.seen_ids and os.path.exists(self.db.db_path):
+            try:
+                with self.db._get_connection() as conn:
+                    rows = conn.execute("SELECT id FROM products WHERE is_in_stock = 1").fetchall()
+                    if rows:
+                        self.seen_ids = {str(r["id"]) for r in rows}
+                        logger.info(f"已扫描缓存为空，已从本地数据库恢复 {len(self.seen_ids)} 件在库商品至基准线")
+                        self.save_seen_cache()
+            except Exception as e:
+                logger.warning(f"从本地数据库恢复在库商品至基准线异常: {e}")
+
     def save_seen_cache(self):
         """持久化已发现商品 ID"""
         try:
@@ -64,7 +77,7 @@ class MandarakeMonitor:
         self.save_seen_cache()
         logger.info("已清空已扫描商品去重缓存")
 
-    def init_baseline(self):
+    def init_baseline(self) -> int:
         """一键将当前所有在售商品设为基准线（只收录不报警）"""
         logger.info("正在建立当前库存基准线...")
         rules = self.config.get("rules")
@@ -81,8 +94,18 @@ class MandarakeMonitor:
                 self.seen_ids.add(str(item["id"]))
                 count += 1
 
+        # 同时同步本地归档数据库中所有在库商品至基准线
+        try:
+            with self.db._get_connection() as conn:
+                rows = conn.execute("SELECT id FROM products WHERE is_in_stock = 1").fetchall()
+                for r in rows:
+                    self.seen_ids.add(str(r["id"]))
+        except Exception as e:
+            logger.warning(f"同步数据库已有商品至基准线失败: {e}")
+
         self.save_seen_cache()
-        logger.info(f"基准线建立完成，已记录 {count} 件在库商品为已知库存")
+        logger.info(f"基准线建立完成，已记录 {len(self.seen_ids)} 件在库商品为已知库存")
+        return len(self.seen_ids)
 
     def check_once(self) -> List[Dict[str, Any]]:
         """执行单轮监控检测，带自动重试机制"""
@@ -92,7 +115,11 @@ class MandarakeMonitor:
 
         sched_cfg = self.config.get("schedule", {})
         retry_count = max(0, int(sched_cfg.get("retry_count", 3)))
-        retry_delay = max(0.5, float(sched_cfg.get("retry_delay", 5.0)))
+        in_burst = getattr(self, "scheduler", None) and self.scheduler.in_burst_mode
+        if in_burst:
+            retry_delay = max(0.1, float(sched_cfg.get("burst_retry_delay", 1.0)))
+        else:
+            retry_delay = max(0.5, float(sched_cfg.get("retry_delay", 5.0)))
 
         rules = self.config.get("rules")
         if rules is None:

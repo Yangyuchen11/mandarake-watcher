@@ -215,13 +215,32 @@ def create_app(
     @app.route("/api/trigger_burst", methods=["POST"])
     @app.route("/api/monitor/trigger_burst", methods=["POST"])
     def api_monitor_trigger_burst():
-        scheduler.trigger_burst(duration_minutes=3)
-        return jsonify({"success": True, "message": "已启动 3 分钟高频爆发检测模式"})
+        body = request.get_json(silent=True) or {}
+        action = body.get("action")
+        if action == "stop" or (action == "toggle" and scheduler.in_burst_mode):
+            scheduler.stop_burst()
+            return jsonify({"success": True, "in_burst_mode": False, "message": "已停止高频爆发模式，恢复日常平缓监控"})
+
+        sched_cfg = monitor.config.get("schedule", {})
+        duration = body.get("duration")
+        if not duration:
+            duration = sched_cfg.get("burst_duration_minutes", 3)
+        try:
+            duration = max(1, int(duration))
+        except (ValueError, TypeError):
+            duration = 3
+        scheduler.trigger_burst(duration_minutes=duration)
+        return jsonify({"success": True, "in_burst_mode": True, "message": f"已启动 {duration} 分钟高频爆发检测模式"})
+
+    @app.route("/api/monitor/stop_burst", methods=["POST"])
+    def api_monitor_stop_burst():
+        scheduler.stop_burst()
+        return jsonify({"success": True, "in_burst_mode": False, "message": "已停止高频爆发模式，恢复日常平缓监控"})
 
     @app.route("/api/monitor/init_baseline", methods=["POST"])
     def api_monitor_init_baseline():
-        monitor.init_baseline()
-        return jsonify({"success": True, "message": "已将当前所有在售商品加入基准线缓存"})
+        total_count = monitor.init_baseline()
+        return jsonify({"success": True, "message": f"基准线建立完成！已将 {total_count} 件在库商品录入已知去重基准线"})
 
     # --- 监控规则与通知测试 ---
 

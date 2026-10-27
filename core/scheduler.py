@@ -16,6 +16,7 @@ logger = logging.getLogger("mandarake.scheduler")
 class MandarakeScheduler:
     def __init__(self, monitor: MandarakeMonitor):
         self.monitor = monitor
+        self.monitor.scheduler = self
         self.running = False
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -46,11 +47,20 @@ class MandarakeScheduler:
             self._thread.join(timeout=3.0)
         logger.info("Mandarake 定时监控调度器已停止")
 
-    def trigger_burst(self, duration_minutes: int = 3):
+    def trigger_burst(self, duration_minutes: Optional[int] = None):
         """手动触发爆发检测模式"""
+        if duration_minutes is None:
+            sched_cfg = self.monitor.config.get("schedule", {})
+            duration_minutes = int(sched_cfg.get("burst_duration_minutes", 3))
         self.in_burst_mode = True
         self.burst_end_time = time.time() + duration_minutes * 60
         logger.info(f"⚡ 手动启动高频爆发抢购模式，持续 {duration_minutes} 分钟！")
+
+    def stop_burst(self):
+        """手动停止爆发检测模式"""
+        self.in_burst_mode = False
+        self.burst_end_time = 0.0
+        logger.info("⚡ 手动停止高频爆发模式，恢复日常平缓监控")
 
     def run_daily_stock_sync(self) -> Dict[str, Any]:
         """
@@ -121,11 +131,15 @@ class MandarakeScheduler:
         """获取调度器当前状态"""
         now = time.time()
         burst_left = max(0, int(self.burst_end_time - now)) if self.in_burst_mode else 0
+        sched_cfg = self.monitor.config.get("schedule", {})
         return {
             "running": self.running,
             "in_burst_mode": self.in_burst_mode,
             "burst_remaining_seconds": burst_left,
-            "interval_seconds": self.monitor.config.get("schedule", {}).get("interval_seconds", 60),
+            "burst_duration_minutes": sched_cfg.get("burst_duration_minutes", 3),
+            "burst_interval_seconds": sched_cfg.get("burst_interval_seconds", 2),
+            "burst_retry_delay": sched_cfg.get("burst_retry_delay", 1),
+            "interval_seconds": sched_cfg.get("interval_seconds", 60),
             "last_check_time": self.monitor.last_check_time,
             "total_checks": self.monitor.total_checks,
             "total_matches": self.monitor.total_matches,
@@ -157,10 +171,11 @@ class MandarakeScheduler:
                 self.monitor.check_once()
 
                 # 4. 根据模式确定睡眠间隔
+                sched_cfg = self.monitor.config.get("schedule", {})
                 if self.in_burst_mode:
-                    sleep_interval = 2.0  # 爆发模式每 2 秒检测一次
+                    burst_interval = float(sched_cfg.get("burst_interval_seconds", 2.0))
+                    sleep_interval = max(0.5, burst_interval)
                 else:
-                    sched_cfg = self.monitor.config.get("schedule", {})
                     sleep_interval = max(3, int(sched_cfg.get("interval_seconds", 60)))
 
                 # 睡眠可中断

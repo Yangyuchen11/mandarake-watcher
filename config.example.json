@@ -3,7 +3,10 @@
   "schedule": {
     "interval_seconds": 60,
     "retry_count": 5,
-    "retry_delay": 5
+    "retry_delay": 5,
+    "burst_duration_minutes": 3,
+    "burst_interval_seconds": 2,
+    "burst_retry_delay": 1
   },
   "rules": [
     {

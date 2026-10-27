@@ -441,6 +441,9 @@ function initEventListeners() {
         const intervalSec = parseInt(document.getElementById("cfg-interval-seconds")?.value, 10) || 60;
         const retryCount = parseInt(document.getElementById("cfg-retry-count")?.value, 10) || 3;
         const retryDelay = parseFloat(document.getElementById("cfg-retry-delay")?.value) || 5;
+        const burstDuration = parseInt(document.getElementById("cfg-burst-duration")?.value, 10) || 3;
+        const burstInterval = parseFloat(document.getElementById("cfg-burst-interval")?.value) || 2;
+        const burstRetryDelay = parseFloat(document.getElementById("cfg-burst-retry-delay")?.value) || 1;
 
         try {
             const res = await fetch("/api/config", {
@@ -450,12 +453,15 @@ function initEventListeners() {
                     schedule: {
                         interval_seconds: intervalSec,
                         retry_count: retryCount,
-                        retry_delay: retryDelay
+                        retry_delay: retryDelay,
+                        burst_duration_minutes: burstDuration,
+                        burst_interval_seconds: burstInterval,
+                        burst_retry_delay: burstRetryDelay
                     }
                 })
             });
             const data = await res.json();
-            alert("调度与重试参数已成功保存！当前扫描间隔: " + intervalSec + " 秒");
+            alert("调度与重试参数已成功保存！\n日常间隔: " + intervalSec + " 秒 | 爆发持续: " + burstDuration + " 分钟 | 爆发扫描: " + burstInterval + " 秒");
             loadStats();
         } catch (err) {
             alert("保存失败: " + err);
@@ -603,12 +609,18 @@ function initEventListeners() {
 
     document.getElementById("btn-monitor-burst")?.addEventListener("click", async () => {
         try {
-            const res = await fetch("/api/monitor/trigger_burst", { method: "POST" });
+            const burstDurationInput = document.getElementById("cfg-burst-duration");
+            const duration = burstDurationInput ? parseInt(burstDurationInput.value, 10) : 3;
+            const res = await fetch("/api/monitor/trigger_burst", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "toggle", duration: duration })
+            });
             const data = await res.json();
             alert(data.message);
             loadStats();
         } catch (err) {
-            alert("启动高频爆发模式失败: " + err);
+            alert("操作高频爆发模式失败: " + err);
         }
     });
 
@@ -1198,6 +1210,12 @@ async function loadMonitorConfig() {
         if (retryCountInput) retryCountInput.value = sched.retry_count !== undefined ? sched.retry_count : 3;
         const retryDelayInput = document.getElementById("cfg-retry-delay");
         if (retryDelayInput) retryDelayInput.value = sched.retry_delay !== undefined ? sched.retry_delay : 5;
+        const burstDurationInput = document.getElementById("cfg-burst-duration");
+        if (burstDurationInput) burstDurationInput.value = sched.burst_duration_minutes !== undefined ? sched.burst_duration_minutes : 3;
+        const burstIntervalInput = document.getElementById("cfg-burst-interval");
+        if (burstIntervalInput) burstIntervalInput.value = sched.burst_interval_seconds !== undefined ? sched.burst_interval_seconds : 2;
+        const burstRetryDelayInput = document.getElementById("cfg-burst-retry-delay");
+        if (burstRetryDelayInput) burstRetryDelayInput.value = sched.burst_retry_delay !== undefined ? sched.burst_retry_delay : 1;
 
         // 2. 邮箱设置
         const emailCheck = document.getElementById("cfg-email-enabled");
@@ -1372,16 +1390,30 @@ function updateSchedulerUI(sched) {
         }
     }
 
+    const burstBtn = document.getElementById("btn-monitor-burst");
     if (sched.running) {
         if (dot) dot.className = "status-indicator-dot";
         if (title) {
             title.textContent = sched.in_burst_mode 
-                ? `⚡ 高频爆发抢购模式运行中 (剩余 ${sched.burst_remaining_seconds}s)`
+                ? `⚡ 高频爆发模式运行中 (每 ${sched.burst_interval_seconds || 2}s 扫描 | 剩余 ${sched.burst_remaining_seconds}s)`
                 : `监控调度器运行中 (每 ${sched.interval_seconds} 秒巡检一次)`;
+        }
+        if (burstBtn) {
+            if (sched.in_burst_mode) {
+                burstBtn.innerHTML = `<i class="fa-solid fa-stop"></i> 停止高频爆发 (${sched.burst_remaining_seconds}s)`;
+                burstBtn.className = "btn btn-danger btn-sm";
+            } else {
+                burstBtn.innerHTML = `<i class="fa-solid fa-bolt"></i> 启动高频爆发`;
+                burstBtn.className = "btn btn-warning btn-sm";
+            }
         }
     } else {
         if (dot) dot.className = "status-indicator-dot stopped";
         if (title) title.textContent = "监控调度器已停止";
+        if (burstBtn) {
+            burstBtn.innerHTML = `<i class="fa-solid fa-bolt"></i> 启动高频爆发`;
+            burstBtn.className = "btn btn-warning btn-sm";
+        }
     }
 
     if (meta) {
