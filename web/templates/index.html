@@ -149,9 +149,6 @@
                         <button class="btn btn-secondary" id="btn-reset-filter" title="重置全部筛选条件">
                             <i class="fa-solid fa-rotate-left"></i> 重置
                         </button>
-                        <button class="btn btn-info" id="btn-reclassify-cats" title="根据标题特征自动将商品归整到精确三级分类中">
-                            <i class="fa-solid fa-wand-magic-sparkles"></i> 智能归整细分
-                        </button>
                     </div>
                 </div>
 
@@ -265,7 +262,19 @@
                             </button>
                         </div>
 
+                        <!-- 智能归整细分全库商品 -->
                         <div class="crawler-sync-box" style="margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--border-color);">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <label style="font-weight: 600; font-size: 0.9rem; color: var(--text-primary);"><i class="fa-solid fa-wand-magic-sparkles"></i> 商品分类智能归整与清洗</label>
+                                <span class="badge-tag" style="font-size: 0.75rem; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3);">特征语义识别</span>
+                            </div>
+                            <button class="btn btn-info btn-block" id="btn-reclassify-cats" style="width: 100%; justify-content: center;" title="全量扫描现有商品数据库，利用分类管理器智能规则将未细分的二级分类重新归整为精确的三级分类">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i> 智能归整细分全库商品
+                            </button>
+                            <small class="text-muted" id="reclassify-status-text" style="display: block; margin-top: 6px; font-size: 0.8rem;">说明: 扫描库中未精确细分的商品，按标题特征规则自动重新归类并持久化。</small>
+                        </div>
+
+                        <div class="crawler-sync-box" style="margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border-color);">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                                 <label style="font-weight: 600; font-size: 0.9rem; color: var(--text-primary);"><i class="fa-solid fa-clock-rotate-left"></i> 每日库存与售罄自动同步</label>
                                 <span class="badge-tag stock" style="font-size: 0.75rem;">每日 05:00 自动巡检</span>

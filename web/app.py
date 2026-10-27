@@ -338,16 +338,10 @@ def create_app(
 
     # --- 监控规则与通知测试 ---
 
+    from core.config_helper import save_config as save_cfg_helper
     def save_config_file(cfg=None):
         target_cfg = cfg if cfg is not None else monitor.config
-        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
-        try:
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(target_cfg, f, ensure_ascii=False, indent=2)
-            return True
-        except Exception as e:
-            logger.warning(f"保存配置异常: {e}")
-            return False
+        return save_cfg_helper(target_cfg)
 
     def normalize_rules(rules_list):
         modified = False
@@ -530,6 +524,10 @@ def create_app(
                 terminal_mgr.remove_listener(on_log)
                 archiver_engine.remove_progress_listener(on_progress)
 
-        return Response(event_stream(), mimetype="text/event-stream")
+        resp = Response(event_stream(), mimetype="text/event-stream")
+        resp.headers["Cache-Control"] = "no-cache"
+        resp.headers["X-Accel-Buffering"] = "no"
+        resp.headers["Connection"] = "keep-alive"
+        return resp
 
     return app

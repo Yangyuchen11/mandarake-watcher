@@ -32,7 +32,7 @@ from core.archive_db import archive_db
 logger = logging.getLogger("mandarake.auto_order")
 
 SESSION_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "session.json")
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+from core.config_helper import load_config as load_cfg_helper, save_config as save_cfg_helper, get_config_path
 
 BASKET_ADD_URL = "https://tools.mandarake.co.jp/basket/add/"
 BASKET_DEL_URL = "https://tools.mandarake.co.jp/basket/del/"
@@ -78,32 +78,26 @@ class MandarakeAutoOrder:
 
     def load_config(self):
         """加载配置文件中的下单设置"""
-        if os.path.exists(CONFIG_FILE):
-            try:
-                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                    cfg = json.load(f)
-                    ao_cfg = cfg.get("auto_order", {})
-                    self.username = ao_cfg.get("username", self.username)
-                    self.password = ao_cfg.get("password", self.password)
-                    self.dry_run = ao_cfg.get("dry_run", True)
-                    self.payment_method = ao_cfg.get("payment_method", "cod")
-            except Exception as e:
-                logger.warning(f"读取下单配置异常: {e}")
+        try:
+            cfg = load_cfg_helper()
+            ao_cfg = cfg.get("auto_order", {})
+            self.username = ao_cfg.get("username", self.username)
+            self.password = ao_cfg.get("password", self.password)
+            self.dry_run = ao_cfg.get("dry_run", True)
+            self.payment_method = ao_cfg.get("payment_method", "cod")
+        except Exception as e:
+            logger.warning(f"读取下单配置异常: {e}")
 
     def save_config(self):
         """保存下单配置"""
         try:
-            cfg = {}
-            if os.path.exists(CONFIG_FILE):
-                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                    cfg = json.load(f)
+            cfg = load_cfg_helper()
             if "auto_order" not in cfg:
                 cfg["auto_order"] = {}
             cfg["auto_order"]["username"] = self.username
             cfg["auto_order"]["dry_run"] = self.dry_run
             cfg["auto_order"]["payment_method"] = self.payment_method
-            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump(cfg, f, ensure_ascii=False, indent=2)
+            save_cfg_helper(cfg)
         except Exception as e:
             logger.warning(f"保存下单配置异常: {e}")
 

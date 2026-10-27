@@ -10,7 +10,6 @@ services:
       - "5005:5005"
     volumes:
       - ./data:/app/data
-      - ./config.json:/app/config.json
     environment:
       - TZ=Asia/Tokyo
       - IN_DOCKER=1

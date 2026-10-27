@@ -196,25 +196,36 @@ function initEventListeners() {
         loadProducts();
     });
 
-    // 智能分类归整按钮
+    // 智能分类归整按钮 (后台分类爬取控制页)
     document.getElementById("btn-reclassify-cats")?.addEventListener("click", async () => {
         const btn = document.getElementById("btn-reclassify-cats");
+        const statusEl = document.getElementById("reclassify-status-text");
         if (btn) {
             btn.disabled = true;
-            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> 正在规整细分...`;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> 正在扫描并规整细分商品...`;
+        }
+        if (statusEl) {
+            statusEl.innerHTML = `<span style="color: #38bdf8;"><i class="fa-solid fa-spinner fa-spin"></i> 正在扫描全库商品标题并自动归整三级子类，请稍候...</span>`;
         }
         try {
             const res = await fetch("/api/categories/reclassify", { method: "POST" });
             const data = await res.json();
             alert(data.message || "分类规整完成！");
+            if (statusEl) {
+                statusEl.innerHTML = `<span style="color: #10b981;"><i class="fa-solid fa-circle-check"></i> ${data.message || "分类规整完成！"}</span>`;
+            }
             loadProducts();
             loadStats();
+            loadCategories();
         } catch (err) {
             alert("智能分类规整异常: " + err);
+            if (statusEl) {
+                statusEl.innerHTML = `<span style="color: #ef4444;"><i class="fa-solid fa-triangle-exclamation"></i> 智能分类规整异常: ${err}</span>`;
+            }
         } finally {
             if (btn) {
                 btn.disabled = false;
-                btn.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> 智能归整细分`;
+                btn.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> 智能归整细分全库商品`;
             }
         }
     });

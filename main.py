@@ -25,6 +25,7 @@ from core.terminal import terminal_mgr
 from notifiers.manager import NotificationManager
 from hooks.auto_order import auto_order_engine
 from web.app import create_app
+from core.config_helper import load_config, get_config_path
 
 # 配置基础控制台日志与 UTF-8 输出支持
 if hasattr(sys.stdout, "reconfigure"):
@@ -47,27 +48,7 @@ class _QuietPollFilter(logging.Filter):
 logging.getLogger('werkzeug').addFilter(_QuietPollFilter())
 logger = logging.getLogger("mandarake.main")
 
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__))), "config.json"
-
-
-def load_config() -> dict:
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(base_dir, "config.json")
-    example_path = os.path.join(base_dir, "config.example.json")
-    if not os.path.exists(config_path) and os.path.exists(example_path):
-        import shutil
-        try:
-            shutil.copyfile(example_path, config_path)
-            logger.info("未检测到 config.json，已自动从 config.example.json 初始化配置文件。")
-        except Exception as e:
-            logger.warning(f"初始化 config.json 失败: {e}")
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.warning(f"读取 config.json 失败: {e}")
-    return {}
+# 统一使用 core.config_helper 管理配置
 
 
 def main():

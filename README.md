@@ -160,26 +160,55 @@ mandarake/
 
 ## 🐳 Linux 云服务器 / Docker 部署指南
 
-### 1. 使用 Docker Compose 一键启动（推荐）
+### 1. 使用 Dekploy 部署（推荐）
+
+本项目已专门针对 **Dekploy**（基于 Docker + Traefik 的自托管 PaaS）进行了容器与反向代理深度适配：
+
+#### 方案 A：以 Application 方式部署（最便捷，推荐）
+1. 打开 Dekploy 控制面板，进入对应 Project，点击 **Create Service -> Application**；
+2. **General 配置**：
+   - **Provider / Source**: `Git`
+   - **Repository URL**: `https://github.com/Yangyuchen11/mandarake-watcher.git`
+   - **Branch**: `main`
+   - **Build Type**: `Dockerfile`
+3. **Network / Port 配置**：
+   - **Port**: `5005`
+4. **Storage / Persistent Volumes (数据持久化)**：
+   - 添加挂载卷：
+     - **Container Path (容器路径)**: `/app/data`
+     - **Volume Name (卷名)**: `mandarake-data`（或任意自定义名称）
+     > 💡 **说明**：系统采用智能配置引擎，所有数据（SQLite 归档库 `archive.db`、去重索引 `seen_ids.json`、登录凭据 `session.json` 以及运行配置 `config.json`）均集中保存在 `/app/data` 中，仅需挂载此单个卷即可保证版本更新、重新部署时不丢失任何数据。
+5. **Domains (域名与 HTTPS)**：
+   - 在 Domains 中添加您的子域名（如 `mndrk.yourdomain.com`），Dekploy 会通过 Traefik 自动申请并配置 Let's Encrypt SSL 证书；
+   - 系统 API 已内置 `X-Accel-Buffering: no` 与 `no-cache` 响应头，Traefik 会直接透传实时 SSE 日志流。
+6. 点击 **Deploy** 部署即可！
+
+#### 方案 B：以 Docker Compose 方式部署
+1. 在 Dekploy 中点击 **Create Service -> Docker Compose**；
+2. 选择 Git 仓库 `https://github.com/Yangyuchen11/mandarake-watcher.git`，直接读取仓库根目录的 `docker-compose.yml`；
+3. 点击 **Deploy** 一键构建启动。
+
+---
+
+### 2. 使用原生 Docker Compose 启动
 
 ```bash
 # 1. 克隆代码仓库
 git clone https://github.com/Yangyuchen11/mandarake-watcher.git
 cd mandarake-watcher
 
-# 2. 从示例配置复制并按需调整
-cp config.example.json config.json
-
-# 3. 构建并启动后台容器
+# 2. 构建并启动后台容器
 docker compose up -d --build
 
-# 4. 查看运行日志
+# 3. 查看运行日志
 docker compose logs -f
 ```
 
 启动完成后，在浏览器访问 `http://<服务器公网IP>:5005` 即可打开 Web 管理看板。
 
-### 2. 使用原生 Docker 命令运行
+---
+
+### 3. 使用原生 Docker 命令运行
 
 ```bash
 # 构建镜像
@@ -191,7 +220,6 @@ docker run -d \
   --restart unless-stopped \
   -p 5005:5005 \
   -v $(pwd)/data:/app/data \
-  -v $(pwd)/config.json:/app/config.json \
   -e TZ=Asia/Tokyo \
   mandarake-watcher:latest
 ```
