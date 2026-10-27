@@ -44,6 +44,10 @@ def create_app(
     def index():
         return render_template("index.html")
 
+    @app.route("/favicon.ico")
+    def favicon():
+        return app.send_static_file("favicon.svg")
+
     # --- 分类体系接口 ---
 
     @app.route("/api/categories")

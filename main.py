@@ -40,12 +40,8 @@ logging.basicConfig(
     format="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s",
     datefmt="%H:%M:%S"
 )
-class _QuietPollFilter(logging.Filter):
-    # 屏蔽前端定时轮询 /api/stats 产生的 werkzeug 访问日志，避免刷屏
-    def filter(self, record):
-        return '/api/stats' not in record.getMessage()
-
-logging.getLogger('werkzeug').addFilter(_QuietPollFilter())
+# 静音 werkzeug 常规 200 API 访问日志，仅在发生 ERROR 及以上错误时记录
+logging.getLogger("werkzeug").setLevel(logging.ERROR)
 logger = logging.getLogger("mandarake.main")
 
 # 统一使用 core.config_helper 管理配置

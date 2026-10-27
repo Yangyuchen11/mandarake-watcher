@@ -45,6 +45,9 @@ class TerminalLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord):
         try:
+            # 过滤 werkzeug 的常规 API 轮询日志（如 200 GET/POST），仅在发生 ERROR 及以上错误时记录
+            if record.name == "werkzeug" and record.levelno < logging.ERROR:
+                return
             formatted = self.format(record)
             self.manager.append_log(
                 level=record.levelname,
@@ -84,6 +87,8 @@ class TerminalLogManager:
         handler = TerminalLogHandler(self)
         root_logger = logging.getLogger()
         root_logger.addHandler(handler)
+        # 确保 werkzeug 日志仅在出错时记录与显示
+        logging.getLogger("werkzeug").setLevel(logging.ERROR)
         if root_logger.level == logging.NOTSET:
             root_logger.setLevel(logging.INFO)
         self._installed = True

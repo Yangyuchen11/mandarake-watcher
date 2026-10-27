@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="mndrkBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF7700" />
+      <stop offset="50%" stop-color="#FF5500" />
+      <stop offset="100%" stop-color="#E63900" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#801800" flood-opacity="0.45" />
+    </filter>
+  </defs>
+  <!-- Mandarake 经典鲜亮橙色圆角背景 -->
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#mndrkBg)" stroke="#FFA34D" stroke-width="1.5" />
+  
+  <!-- 顶部微光高光层 -->
+  <path d="M 6 18 C 6 10 10 6 18 6 L 46 6 C 54 6 58 10 58 18 Q 32 26 6 18 Z" fill="#FFFFFF" opacity="0.18" />
+
+  <!-- 右上角小萌系星芒/亮点 -->
+  <circle cx="50" cy="14" r="3.5" fill="#FFE600" opacity="0.95" />
+
+  <!-- 经典「ま」字样 (Mandarake 核心识别符) -->
+  <text x="32" y="47" font-family="-apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Meiryo', 'Noto Sans JP', 'Segoe UI', sans-serif" font-size="39" font-weight="900" fill="#FFFFFF" text-anchor="middle" filter="url(#glow)">ま</text>
+</svg>
