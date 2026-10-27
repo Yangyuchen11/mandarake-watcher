@@ -181,11 +181,12 @@ class MandarakeMonitor:
                 if max_price > 0 and price > max_price:
                     continue
 
-                # 若该提醒商品在官网上已经售罄：立即同步本地数据库状态为售罄！
+                # 若该关注商品在官网上已经售罄：立即同步本地数据库状态为售罄，并从已扫描缓存中移除以防止重复打印
                 if is_in_stock == 0:
-                    self.db.upsert_products_batch([item])
-                    self.db.mark_product_stock(pid, is_in_stock=0)
                     if pid in self.seen_ids:
+                        self.seen_ids.discard(pid)
+                        self.db.upsert_products_batch([item])
+                        self.db.mark_product_stock(pid, is_in_stock=0)
                         logger.info(f"🏷️ [监控追踪] 规则 [{rule_name}] 设定的关注商品已售罄: {title} (ID: {pid})，已调整为售罄。")
                     continue
 
