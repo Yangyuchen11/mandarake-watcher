@@ -9,9 +9,15 @@ services:
     ports:
       - "5005:5005"
     volumes:
-      - ./data:/app/data
+      # 使用完全独立于 Git 代码仓库的 Docker 具名数据卷进行物理持久化
+      - mandarake_data:/app/data
     environment:
       - TZ=Asia/Tokyo
       - IN_DOCKER=1
       - HOST=0.0.0.0
       - PORT=5005
+
+volumes:
+  mandarake_data:
+    # 显式锁定卷名称，确保无论 Git 目录如何变动或重新克隆，数据卷始终唯一且永久保留
+    name: mandarake_persistent_data
