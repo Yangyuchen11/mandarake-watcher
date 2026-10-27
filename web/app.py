@@ -8,6 +8,7 @@ import queue
 import logging
 import time
 import threading
+import smtplib
 from typing import Dict, Any
 from flask import Flask, render_template, jsonify, request, Response
 
@@ -353,12 +354,16 @@ def create_app(
             try:
                 temp_email.test()
                 return jsonify({"success": True, "message": f"测试邮件已成功发送至 {temp_email.receiver_email}！"})
+            except smtplib.SMTPAuthenticationError as e:
+                return jsonify({"success": False, "message": f"邮箱认证失败 (535): 邮箱账号或授权码不正确。\n提示：QQ/163/Gmail 等邮箱请务必使用网页版邮箱后台生成的【客户端专用授权码/应用密码】，不能直接使用邮箱日常登录密码！\n详情: {e}"})
             except Exception as e:
                 return jsonify({"success": False, "message": f"发送测试邮件失败: {e}"})
         else:
             try:
                 ok = notifier_mgr.test_notifier("email")
                 return jsonify({"success": ok, "message": "测试邮件已发送！" if ok else "邮件测试失败，请检查 SMTP 配置"})
+            except smtplib.SMTPAuthenticationError as e:
+                return jsonify({"success": False, "message": f"邮箱认证失败 (535): 请检查授权码是否正确。\n详情: {e}"})
             except Exception as e:
                 return jsonify({"success": False, "message": f"发送异常: {e}"})
 

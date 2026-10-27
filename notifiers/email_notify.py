@@ -97,6 +97,54 @@ class EmailNotifier(BaseNotifier):
         """
         return html
 
+    def _create_smtp_session(self, timeout: int = 12) -> smtplib.SMTP:
+        """
+        智能建立 SMTP 连接，自动适配 SMTPS (SSL) 与 STARTTLS 协议。
+        彻底解决因端口与加密协议错配导致的 [SSL: WRONG_VERSION_NUMBER] 异常。
+        """
+        import ssl
+        port = int(self.smtp_port)
+
+        # 1. 若端口为 587 或 25，协议规范为 STARTTLS（明文握手后升级加密），直接使用 SMTP + starttls
+        if port in (587, 25):
+            server = smtplib.SMTP(self.smtp_host, port, timeout=timeout)
+            server.ehlo()
+            try:
+                server.starttls()
+                server.ehlo()
+            except Exception as e:
+                logger.debug(f"STARTTLS 升级跳过或失败 (端口 {port}): {e}")
+            return server
+
+        # 2. 若勾选了 SSL 或端口为 465，优先尝试 SMTP_SSL
+        if self.use_ssl or port == 465:
+            try:
+                server = smtplib.SMTP_SSL(self.smtp_host, port, timeout=timeout)
+                return server
+            except (ssl.SSLError, smtplib.SMTPConnectError, OSError) as e:
+                logger.warning(f"SMTP_SSL 连接失败 ({e})，正在自动尝试平滑降级为 STARTTLS 模式重试...")
+                server = smtplib.SMTP(self.smtp_host, port, timeout=timeout)
+                server.ehlo()
+                try:
+                    server.starttls()
+                    server.ehlo()
+                except Exception:
+                    pass
+                return server
+
+        # 3. 其它默认明文/STARTTLS 模式
+        try:
+            server = smtplib.SMTP(self.smtp_host, port, timeout=timeout)
+            server.ehlo()
+            try:
+                server.starttls()
+                server.ehlo()
+            except Exception:
+                pass
+            return server
+        except (ssl.SSLError, smtplib.SMTPConnectError, OSError):
+            return smtplib.SMTP_SSL(self.smtp_host, port, timeout=timeout)
+
     def notify(self, items: List[Dict[str, Any]], rule_name: str = "") -> bool:
         if not self.enabled or not self.smtp_host or not self.smtp_user or not items:
             return False
@@ -111,12 +159,7 @@ class EmailNotifier(BaseNotifier):
             html_content = self._build_html(items, rule_name)
             msg.attach(MIMEText(html_content, "html", "utf-8"))
 
-            if self.use_ssl or self.smtp_port == 465:
-                server = smtplib.SMTP_SSL(self.smtp_host, self.smtp_port, timeout=12)
-            else:
-                server = smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=12)
-                server.starttls()
-
+            server = self._create_smtp_session(timeout=12)
             server.login(self.smtp_user, self.smtp_password)
             server.sendmail(self.smtp_user, [self.receiver_email], msg.as_string())
             server.quit()
@@ -136,12 +179,7 @@ class EmailNotifier(BaseNotifier):
             msg["From"] = f"Mandarake Monitor <{self.smtp_user}>"
             msg["To"] = self.receiver_email
 
-            if self.use_ssl or self.smtp_port == 465:
-                server = smtplib.SMTP_SSL(self.smtp_host, self.smtp_port, timeout=10)
-            else:
-                server = smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=10)
-                server.starttls()
-
+            server = self._create_smtp_session(timeout=10)
             server.login(self.smtp_user, self.smtp_password)
             server.sendmail(self.smtp_user, [self.receiver_email], msg.as_string())
             server.quit()
