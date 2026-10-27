@@ -1,12 +1,11 @@
 """
 统一通知中心调度器 (Notification Manager)
+精简版：仅保留云端与远程友好的 Discord Webhook 与 SMTP 邮件通知
 """
 import logging
 from typing import List, Dict, Any
 
 from notifiers.base import BaseNotifier
-from notifiers.sound import SoundNotifier
-from notifiers.desktop import DesktopNotifier
 from notifiers.discord import DiscordNotifier
 from notifiers.email_notify import EmailNotifier
 
@@ -21,22 +20,14 @@ class NotificationManager:
     def reload_config(self, config: Dict[str, Any]):
         n_cfg = config.get("notifiers", {})
 
-        # 1. 声音
-        sound_cfg = n_cfg.get("sound", {})
-        self.notifiers["sound"] = SoundNotifier(enabled=sound_cfg.get("enabled", True))
-
-        # 2. 桌面弹窗
-        desk_cfg = n_cfg.get("desktop", {})
-        self.notifiers["desktop"] = DesktopNotifier(enabled=desk_cfg.get("enabled", True))
-
-        # 3. Discord
+        # 1. Discord Webhook 通知
         dc_cfg = n_cfg.get("discord", {})
         self.notifiers["discord"] = DiscordNotifier(
             webhook_url=dc_cfg.get("webhook_url", ""),
             enabled=dc_cfg.get("enabled", False)
         )
 
-        # 4. Email (SMTP)
+        # 2. Email (SMTP) 邮件通知
         email_cfg = n_cfg.get("email", {})
         self.notifiers["email"] = EmailNotifier(
             smtp_host=email_cfg.get("smtp_host", ""),

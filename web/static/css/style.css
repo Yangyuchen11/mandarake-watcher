@@ -693,12 +693,44 @@ input:checked + .slider:before {
     flex-direction: column;
     transition: var(--transition);
     position: relative;
+    cursor: pointer;
+    user-select: none;
 }
 
 .product-card:hover {
     transform: translateY(-4px);
-    border-color: rgba(255, 87, 34, 0.4);
+    border-color: rgba(255, 87, 34, 0.5);
     box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+}
+
+.card-direct-link-hint {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: rgba(15, 23, 42, 0.8);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    color: #e2e8f0;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    opacity: 0.85;
+    transition: all 0.25s ease;
+    z-index: 2;
+}
+
+.product-card:hover .card-direct-link-hint {
+    opacity: 1;
+    background: var(--brand-primary);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.3);
+    transform: scale(1.04);
+    box-shadow: 0 4px 12px rgba(255, 87, 34, 0.35);
 }
 
 /* 缩略图 */

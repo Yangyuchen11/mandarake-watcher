@@ -18,7 +18,6 @@ from core.archiver import archiver_engine
 from core.monitor import MandarakeMonitor
 from core.scheduler import MandarakeScheduler
 from core.terminal import terminal_mgr
-from hooks.auto_order import auto_order_engine
 from notifiers.manager import NotificationManager
 
 logger = logging.getLogger("mandarake.web")
@@ -114,18 +113,12 @@ def create_app(
         stats = archive_db.get_stats()
         crawler_status = archiver_engine.get_status()
         sched_status = scheduler.get_status()
-        auth_status = {
-            "is_logged_in": auto_order_engine.is_logged_in,
-            "account_name": auto_order_engine.account_name,
-            "dry_run": auto_order_engine.dry_run,
-        }
         return jsonify({
             "success": True,
             "status": "ok",
             "stats": stats,
             "crawler": crawler_status,
             "scheduler": sched_status,
-            "auth": auth_status,
             "seen_count": len(monitor.seen_ids)
         })
 
@@ -194,116 +187,6 @@ def create_app(
     def api_crawler_progress_list():
         items = archive_db.get_all_crawl_progress()
         return jsonify({"success": True, "items": items})
-
-    # --- 帐号认证与 Session 管理 ---
-
-    @app.route("/api/auth/status")
-    def api_auth_status():
-        # 若距离上次检测超过 60 秒则重新在线检验一次
-        if time.time() - auto_order_engine.last_login_check > 60:
-            auto_order_engine.check_login_status()
-        return jsonify({
-            "success": True,
-            "is_logged_in": auto_order_engine.is_logged_in,
-            "account_name": auto_order_engine.account_name,
-            "dry_run": auto_order_engine.dry_run,
-            "payment_method": auto_order_engine.payment_method
-        })
-
-    @app.route("/api/auth/login_browser", methods=["POST"])
-    def api_auth_login_browser():
-        res = auto_order_engine.launch_browser_login()
-        return jsonify(res)
-
-    @app.route("/api/auth/sync_session", methods=["POST"])
-    def api_auth_sync_session():
-        is_logged = auto_order_engine.check_login_status()
-        if is_logged:
-            auto_order_engine.save_session()
-        return jsonify({
-            "success": is_logged,
-            "is_logged_in": is_logged,
-            "account_name": auto_order_engine.account_name,
-            "message": f"登录态有效: {auto_order_engine.account_name}" if is_logged else "未检测到有效登录态，请在浏览器中完成登录后再点击同步"
-        })
-
-    @app.route("/api/auth/save_cookies", methods=["POST"])
-    def api_auth_save_cookies():
-        body = request.get_json(silent=True) or {}
-        cookie_str = body.get("cookie_str", "")
-        ok = auto_order_engine.import_cookie_string(cookie_str)
-        return jsonify({
-            "success": ok,
-            "is_logged_in": ok,
-            "account_name": auto_order_engine.account_name,
-            "message": f"Cookie 导入成功！已识别帐号: {auto_order_engine.account_name}" if ok else "Cookie 验证未通过，请检查是否包含完整会话凭据"
-        })
-
-    @app.route("/api/auth/logout", methods=["POST"])
-    def api_auth_logout():
-        auto_order_engine.clear_session()
-        return jsonify({"success": True, "message": "已注销并清空 Session"})
-
-    @app.route("/api/auth/toggle_dry_run", methods=["POST"])
-    def api_auth_toggle_dry_run():
-        body = request.get_json(silent=True) or {}
-        dry_run = body.get("dry_run", True)
-        auto_order_engine.dry_run = bool(dry_run)
-        auto_order_engine.save_config()
-        return jsonify({
-            "success": True,
-            "dry_run": auto_order_engine.dry_run,
-            "message": "已开启 Dry-Run 仿真测试模式 (不扣款安全演练)" if auto_order_engine.dry_run else "⚠️ 已切换为【实盘下单模式】，下单将向官网提交真实购买！"
-        })
-
-    # --- 下单执行与订单记录 ---
-
-    @app.route("/api/order/buy", methods=["POST"])
-    def api_order_buy():
-        body = request.get_json(silent=True) or {}
-        item_id = body.get("item_id")
-        title = body.get("title", "")
-        price = body.get("price", 0)
-        img_url = body.get("img_url", "")
-        shop = body.get("shop", "")
-        dry_run = body.get("dry_run")
-        payment_method = body.get("payment_method")
-
-        if not item_id:
-            return jsonify({"success": False, "message": "缺少商品 ID 参数"})
-
-        res = auto_order_engine.order_item(
-            item_id=item_id,
-            title=title,
-            price=price,
-            img_url=img_url,
-            shop=shop,
-            dry_run=dry_run,
-            payment_method=payment_method,
-            trigger_type="manual"
-        )
-        if res.get("success"):
-            archive_db.mark_product_stock(item_id, is_in_stock=0)
-        return jsonify(res)
-
-    @app.route("/api/orders")
-    def api_orders():
-        limit = request.args.get("limit", 50, type=int)
-        offset = request.args.get("offset", 0, type=int)
-        items = archive_db.query_orders(limit=limit, offset=offset)
-        return jsonify({"success": True, "items": items})
-
-    @app.route("/api/orders/delete", methods=["POST"])
-    def api_orders_delete():
-        body = request.get_json(silent=True) or {}
-        order_id = body.get("order_id")
-        ok = archive_db.delete_order(order_id)
-        return jsonify({"success": ok})
-
-    @app.route("/api/orders/clear", methods=["POST"])
-    def api_orders_clear():
-        ok = archive_db.clear_orders()
-        return jsonify({"success": ok, "message": "已清空所有订单记录"})
 
     # --- 系统终端日志 ---
 

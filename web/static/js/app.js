@@ -22,16 +22,9 @@ const state = {
     selectedPresets: [],
     presetMode: "or", // "and" 或 "or"
 
-    isLoggedIn: false,
-    accountName: "",
-    dryRun: true,
-    
     selectedCategoriesForCrawl: [],
     lastLogId: 0,
     activeTab: "tab-products",
-    
-    // 当前待下单暂存
-    pendingOrderItem: null,
 };
 
 // 预设关键词本地持久化 Key 与内置默认娃娃特征标签
@@ -46,11 +39,9 @@ document.addEventListener("DOMContentLoaded", () => {
     initTabs();
     initSSE();
     loadCategories();
-    loadAuthStatus();
     initPresetKeywords();
     loadProducts();
     loadStats();
-    loadOrders();
     loadMonitorConfig();
     initEventListeners();
     
@@ -58,8 +49,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setInterval(() => {
         loadStats();
         if (state.activeTab === "tab-orders") {
-            loadOrders();
-        }
+                }
     }, 10000);
 });
 
@@ -82,8 +72,7 @@ function initTabs() {
             if (targetId === "tab-products") {
                 loadProducts();
             } else if (targetId === "tab-orders") {
-                loadOrders();
-            } else if (targetId === "tab-crawler") {
+                        } else if (targetId === "tab-crawler") {
                 loadCrawlerStatus();
             } else if (targetId === "tab-monitor") {
                 loadMonitorConfig();
@@ -284,8 +273,7 @@ function initEventListeners() {
             const res = await fetch("/api/auth/sync_session", { method: "POST" });
             const data = await res.json();
             alert(data.message);
-            loadAuthStatus();
-        } catch (err) {
+                } catch (err) {
             alert("同步会话异常: " + err);
         }
     });
@@ -306,8 +294,7 @@ function initEventListeners() {
             });
             const data = await res.json();
             alert(data.message);
-            loadAuthStatus();
-        } catch (err) {
+                } catch (err) {
             alert("保存 Cookie 失败: " + err);
         }
     });
@@ -319,8 +306,7 @@ function initEventListeners() {
             const res = await fetch("/api/auth/logout", { method: "POST" });
             const data = await res.json();
             alert(data.message);
-            loadAuthStatus();
-        } catch (err) {
+                } catch (err) {
             alert("注销失败: " + err);
         }
     });
@@ -375,8 +361,7 @@ function initEventListeners() {
                 }
             }
 
-            loadOrders();
-            loadProducts();
+                    loadProducts();
             loadStats();
         } catch (err) {
             alert("下单请求发生错误: " + err);
@@ -441,8 +426,7 @@ function initEventListeners() {
     document.getElementById("btn-clear-orders")?.addEventListener("click", async () => {
         if (confirm("确定清空全部下单历史记录吗？")) {
             await fetch("/api/orders/clear", { method: "POST" });
-            loadOrders();
-        }
+                }
     });
 
     // 17. 终端控制
@@ -600,28 +584,6 @@ function initEventListeners() {
         }
     });
 
-    // 21. 本地声音与桌面通知勾选自动保存
-    const soundCheck = document.getElementById("cfg-sound-enabled");
-    const deskCheck = document.getElementById("cfg-desktop-enabled");
-    const saveLocalNotifiers = async () => {
-        try {
-            await fetch("/api/config", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    notifiers: {
-                        sound: { enabled: soundCheck?.checked ?? true },
-                        desktop: { enabled: deskCheck?.checked ?? true }
-                    }
-                })
-            });
-        } catch (e) {
-            console.error("保存本地通知设置失败:", e);
-        }
-    };
-    soundCheck?.addEventListener("change", saveLocalNotifiers);
-    deskCheck?.addEventListener("change", saveLocalNotifiers);
-
     // 22. 监控调度顶部控制
     document.getElementById("btn-monitor-check-now")?.addEventListener("click", async () => {
         const btn = document.getElementById("btn-monitor-check-now");
@@ -690,8 +652,6 @@ function initEventListeners() {
         const kwStr = document.getElementById("modal-rule-keywords")?.value.trim() || "";
         const exStr = document.getElementById("modal-rule-exclude")?.value.trim() || "";
         const maxPrice = parseInt(document.getElementById("modal-rule-max-price")?.value, 10) || 0;
-        const autoOrder = document.getElementById("modal-rule-auto-order")?.checked || false;
-
         const activeModeBtn = document.querySelector("#modal-rule-mode-group .seg-btn.active");
         const matchMode = activeModeBtn ? activeModeBtn.getAttribute("data-mode") : "and";
 
@@ -715,7 +675,6 @@ function initEventListeners() {
                     exclude_keywords: excludeKeywords,
                     match_mode: matchMode,
                     max_price: maxPrice,
-                    auto_order: autoOrder,
                     enabled: true
                 })
             });
@@ -888,19 +847,21 @@ async function loadProducts() {
     }
 }
 
-// 创建单个商品卡片 DOM
+// 创建单个商品卡片 DOM (点击整卡在新标签页直达 Mandarake 官网详情)
 function createProductCard(item) {
     const card = document.createElement("div");
     const isInStock = item.is_in_stock === 1;
     const isNew = item.is_new === 1;
     
-    card.className = "product-card" + (isInStock ? "" : " is-soldout");
+    card.className = "product-card clickable-card" + (isInStock ? "" : " is-soldout");
     card.setAttribute("data-item-id", item.id);
+    card.setAttribute("title", "点击在新标签页打开 Mandarake 官网查看商品详情");
 
     // 缩略图 fallback
     const imgUrl = item.img_url || "https://order.mandarake.co.jp/content/img/icon/shortcut/192.png";
     const priceText = item.price ? `${item.price.toLocaleString()}円` : "价格未标明";
     const shopText = item.shop || "まんだらけ";
+    const itemUrl = item.url || `https://order.mandarake.co.jp/order/detailPage/item?itemCode=${item.id}`;
 
     card.innerHTML = `
         <div class="card-media-wrap">
@@ -910,6 +871,9 @@ function createProductCard(item) {
                 ${isNew ? '<span class="badge-tag new-arrival">⚡ 新着</span>' : ''}
             </div>
             <div class="shop-tag"><i class="fa-solid fa-store"></i> ${escapeHtml(shopText)}</div>
+            <div class="card-direct-link-hint">
+                <i class="fa-solid fa-arrow-up-right-from-square"></i> 直达官网
+            </div>
         </div>
         <div class="card-content">
             <div class="card-cat-path" title="${escapeHtml(item.category_name || '')}">
@@ -920,61 +884,15 @@ function createProductCard(item) {
                 <div class="price-main">${priceText}</div>
                 <div class="price-tax">${item.price_str ? escapeHtml(item.price_str) : ''}</div>
             </div>
-            <div class="card-actions">
-                <button class="btn-buy-now btn-oneclick-order" ${!isInStock ? 'disabled title="商品已售罄"' : ''}>
-                    <i class="fa-solid fa-bolt"></i> ${state.dryRun ? '仿真测试下单' : '一键立即下单'}
-                </button>
-                <a href="${item.url}" target="_blank" rel="noopener" class="btn-item-link" title="在 Mandarake 官网打开">
-                    <i class="fa-solid fa-arrow-up-right-from-square"></i> 官网
-                </a>
-            </div>
         </div>
     `;
 
-    // 绑定下单按钮事件
-    const buyBtn = card.querySelector(".btn-oneclick-order");
-    if (buyBtn && isInStock) {
-        buyBtn.addEventListener("click", () => {
-            promptOrderConfirm(item);
-        });
-    }
+    // 整个卡片可点击跳转
+    card.addEventListener("click", () => {
+        window.open(itemUrl, "_blank", "noopener,noreferrer");
+    });
 
     return card;
-}
-
-// 弹出下单确认弹窗
-function promptOrderConfirm(item) {
-    state.pendingOrderItem = item;
-    const modal = document.getElementById("order-confirm-modal");
-    if (!modal) return;
-
-    document.getElementById("order-item-img").src = item.img_url || "";
-    document.getElementById("order-item-title").textContent = item.title;
-    document.getElementById("order-item-price").textContent = item.price ? `${item.price.toLocaleString()}円` : "";
-    document.getElementById("order-item-shop").textContent = item.shop || "Mandarake";
-    document.getElementById("order-item-id").textContent = `商品番号: ${item.item_no || item.id} | ID: ${item.id}`;
-
-    const warningEl = document.getElementById("order-mode-warning");
-    if (warningEl) {
-        if (state.dryRun) {
-            warningEl.className = "order-warning";
-            warningEl.innerHTML = `
-                <i class="fa-solid fa-shield-halved"></i>
-                <span>当前处于 <strong>Dry-Run 仿真测试模式</strong>，将模拟加购并结算至最终确认页，在提交前自动拦截并清空测试购物车，<strong>安全演练不产生真实扣款</strong>。</span>
-            `;
-        } else {
-            warningEl.className = "order-warning danger";
-            warningEl.style.borderColor = "var(--danger)";
-            warningEl.style.background = "var(--danger-bg)";
-            warningEl.style.color = "#fca5a5";
-            warningEl.innerHTML = `
-                <i class="fa-solid fa-triangle-exclamation"></i>
-                <span>⚠️ 当前处于 <strong>【实盘下单模式】</strong>！点击确认将向 Mandarake 官网提交真实订单，扣除账户或生成真实待付款订单！请谨慎操作！</span>
-            `;
-        }
-    }
-
-    modal.classList.add("active");
 }
 
 // 渲染分页按钮
@@ -1051,81 +969,8 @@ async function loadStats() {
             updateSchedulerUI(data.scheduler);
         }
 
-        // 帐号状态同步
-        if (data.auth) {
-            state.isLoggedIn = data.auth.is_logged_in;
-            state.accountName = data.auth.account_name;
-            state.dryRun = data.auth.dry_run;
-            updateAuthUI();
-            updateModeLabel();
-        }
-    } catch (err) {
+        } catch (err) {
         console.debug("获取统计失败:", err);
-    }
-}
-
-// --- 帐号与登录态管理 ---
-async function loadAuthStatus() {
-    try {
-        const res = await fetch("/api/auth/status");
-        const data = await res.json();
-        if (!data.success) return;
-
-        state.isLoggedIn = data.is_logged_in;
-        state.accountName = data.account_name;
-        state.dryRun = data.dry_run;
-
-        updateAuthUI();
-        updateModeLabel();
-    } catch (err) {
-        console.error("加载登录状态失败:", err);
-    }
-}
-
-function updateAuthUI() {
-    const pill = document.getElementById("auth-status-pill");
-    const text = document.getElementById("auth-text");
-    const dot = pill ? pill.querySelector(".status-dot") : null;
-    const modalTitle = document.getElementById("modal-account-title");
-    const modalDesc = document.getElementById("modal-account-desc");
-    const modalIcon = document.getElementById("modal-status-icon");
-
-    if (state.isLoggedIn) {
-        if (dot) {
-            dot.className = "status-dot connected";
-        }
-        const name = state.accountName || "已登录用户";
-        if (text) text.textContent = name;
-        if (modalTitle) modalTitle.textContent = `已连接: ${name}`;
-        if (modalDesc) modalDesc.textContent = "当前 Mandarake 会话有效，支持自动加购与一键下单抢购";
-        if (modalIcon) modalIcon.innerHTML = `<i class="fa-solid fa-circle-check" style="color:var(--success)"></i>`;
-    } else {
-        if (dot) {
-            dot.className = "status-dot disconnected";
-        }
-        if (text) text.textContent = "未登录帐号";
-        if (modalTitle) modalTitle.textContent = "未登录帐号";
-        if (modalDesc) modalDesc.textContent = "登录后即可启用一键快速下单与定点自动抢购功能";
-        if (modalIcon) modalIcon.innerHTML = `<i class="fa-solid fa-user-shield" style="color:var(--brand-primary)"></i>`;
-    }
-}
-
-function updateModeLabel() {
-    const lbl = document.getElementById("mode-label-text");
-    const toggle = document.getElementById("dry-run-toggle");
-    const cfgCheck = document.getElementById("cfg-dry-run-check");
-
-    if (toggle) toggle.checked = state.dryRun;
-    if (cfgCheck) cfgCheck.checked = state.dryRun;
-
-    if (lbl) {
-        if (state.dryRun) {
-            lbl.textContent = "🛡️ 仿真测试 (Dry-Run)";
-            lbl.style.color = "var(--text-primary)";
-        } else {
-            lbl.textContent = "⚠️ 实盘下单模式";
-            lbl.style.color = "var(--danger)";
-        }
     }
 }
 
@@ -1264,88 +1109,6 @@ async function loadCrawlProgressTable() {
     }
 }
 
-// --- 订单历史记录 ---
-async function loadOrders() {
-    try {
-        const res = await fetch("/api/orders?limit=100");
-        const data = await res.json();
-        if (!data.success) return;
-
-        const countBadge = document.getElementById("orders-count-badge");
-        if (countBadge) countBadge.textContent = data.items.length;
-
-        const tbody = document.getElementById("tbody-orders");
-        if (!tbody) return;
-
-        if (data.items.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="8" class="text-center" style="padding:40px;color:var(--text-muted)">暂无下单与购买记录</td></tr>`;
-            return;
-        }
-
-        tbody.innerHTML = "";
-        data.items.forEach(ord => {
-            const tr = document.createElement("tr");
-            const timeStr = new Date(ord.created_at * 1000).toLocaleString("zh-CN", { hour12: false });
-            const statusClass = ord.status || "PENDING";
-            const priceStr = ord.price ? `${ord.price.toLocaleString()}円` : "-";
-
-            tr.innerHTML = `
-                <td><small style="color:var(--text-muted)">${timeStr}</small></td>
-                <td>
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        ${ord.img_url ? `<img src="${ord.img_url}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;">` : ''}
-                        <div>
-                            <div style="font-weight:600;font-size:12px;color:#fff;">${escapeHtml(ord.title || ord.item_id)}</div>
-                            <small style="color:var(--text-muted)">ID: ${escapeHtml(ord.item_id)}</small>
-                        </div>
-                    </div>
-                </td>
-                <td><strong style="color:var(--brand-primary)">${priceStr}</strong></td>
-                <td>${escapeHtml(ord.shop || 'Mandarake')}</td>
-                <td>
-                    <span style="font-size:12px;color:var(--text-primary);font-weight:600;">
-                        ${ord.trigger_type === 'auto' ? '🤖 自动抢购' : '👆 手动一键'}
-                    </span>
-                </td>
-                <td>
-                    <span class="badge-order-status ${ord.status === 'FAILED' ? 'FAILED' : (ord.dry_run ? 'DRY_RUN' : 'SUCCESS')}">
-                        ${ord.dry_run ? '模拟模式' : (ord.status === 'SUCCESS' ? '真实模式 (成功)' : (ord.status === 'FAILED' ? '真实模式 (失败)' : '真实模式'))}
-                    </span>
-                </td>
-                <td>
-                    <div style="font-size:11px;color:var(--text-secondary);max-width:320px;">
-                        ${escapeHtml(ord.message || '-')}
-                    </div>
-                    <small style="color:var(--text-muted)">耗时: ${ord.duration_ms}ms</small>
-                </td>
-                <td>
-                    <button class="btn btn-sm btn-outline-danger" onclick="deleteOrderRecord('${ord.id}')">
-                        <i class="fa-solid fa-trash-can"></i>
-                    </button>
-                </td>
-            `;
-            tbody.appendChild(tr);
-        });
-
-    } catch (err) {
-        console.error("加载订单历史异常:", err);
-    }
-}
-
-async function deleteOrderRecord(orderId) {
-    if (!confirm("确定删除此条订单记录吗？")) return;
-    try {
-        await fetch("/api/orders/delete", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ order_id: orderId })
-        });
-        loadOrders();
-    } catch (err) {
-        alert("删除记录失败: " + err);
-    }
-}
-
 // --- SSE 实时广播流 ---
 function initSSE() {
     const termBody = document.getElementById("terminal-output-container");
@@ -1427,8 +1190,6 @@ async function loadMonitorConfig() {
         const notifiers = cfg.notifiers || {};
         const email = notifiers.email || {};
         const discord = notifiers.discord || {};
-        const sound = notifiers.sound || {};
-        const desktop = notifiers.desktop || {};
 
         // 1. 调度与重试参数
         const intervalInput = document.getElementById("cfg-interval-seconds");
@@ -1460,12 +1221,6 @@ async function loadMonitorConfig() {
         const discordWebhook = document.getElementById("cfg-discord-webhook");
         if (discordWebhook) discordWebhook.value = discord.webhook_url || "";
 
-        // 4. 声音与桌面
-        const soundCheck = document.getElementById("cfg-sound-enabled");
-        if (soundCheck) soundCheck.checked = sound.enabled !== false;
-        const deskCheck = document.getElementById("cfg-desktop-enabled");
-        if (deskCheck) deskCheck.checked = desktop.enabled !== false;
-
         // 5. 规则列表
         renderRulesTable(cfg.rules || []);
 
@@ -1479,7 +1234,7 @@ function renderRulesTable(rules) {
     if (!tbody) return;
 
     if (!rules || rules.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" class="text-center" style="padding:40px;color:var(--text-muted)">暂无监控规则，请点击右上角【添加监控规则】进行创建</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" class="text-center" style="padding:40px;color:var(--text-muted)">暂无监控规则，请点击右上角【添加监控规则】进行创建</td></tr>`;
         return;
     }
 
@@ -1502,10 +1257,6 @@ function renderRulesTable(rules) {
         }
 
         const maxPriceStr = rule.max_price > 0 ? `≤ ${rule.max_price.toLocaleString()}円` : "不限";
-        const autoOrderBadge = rule.auto_order 
-            ? `<span class="badge-tag stock" title="发现即触发自动下单">⚡ 已关联</span>` 
-            : `<span style="color:var(--text-muted)">否</span>`;
-
         const ruleId = rule.id || `rule_${idx}`;
         const ruleName = rule.name || "";
         const isEnabled = rule.enabled !== false;
@@ -1516,7 +1267,6 @@ function renderRulesTable(rules) {
             <td>${kwHtml}</td>
             <td>${exHtml}</td>
             <td><strong style="color:var(--warning)">${maxPriceStr}</strong></td>
-            <td>${autoOrderBadge}</td>
             <td>
                 <label class="switch-toggle" title="启用/暂停此规则">
                     <input type="checkbox" class="rule-status-toggle" ${isEnabled ? 'checked' : ''}>
@@ -1558,7 +1308,7 @@ function openRuleModal(rule = null) {
     document.getElementById("modal-rule-keywords").value = rule && rule.keywords ? rule.keywords.join(" ") : "";
     document.getElementById("modal-rule-exclude").value = rule && rule.exclude_keywords ? rule.exclude_keywords.join(" ") : "難あり ジャンク";
     document.getElementById("modal-rule-max-price").value = rule && rule.max_price ? rule.max_price : "";
-    document.getElementById("modal-rule-auto-order").checked = rule ? Boolean(rule.auto_order) : false;
+    
 
     // 模式切换
     const mode = rule ? (rule.match_mode || "and") : "and";

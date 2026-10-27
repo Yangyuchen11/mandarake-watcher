@@ -13,7 +13,6 @@ from core.categories import ROOT_DOLL_CODE
 from core.scraper import MandarakeScraper
 from core.archive_db import archive_db
 from notifiers.manager import NotificationManager
-from hooks.auto_order import auto_order_engine
 
 logger = logging.getLogger("mandarake.monitor")
 
@@ -28,7 +27,6 @@ class MandarakeMonitor:
         self.notifier_mgr = notifier_mgr
         self.scraper = MandarakeScraper()
         self.db = archive_db
-        self.auto_order = auto_order_engine
 
         self.seen_ids: Set[str] = set()
         self.load_seen_cache()
@@ -106,7 +104,6 @@ class MandarakeMonitor:
                 "keywords": [],
                 "exclude_keywords": [],
                 "max_price": 0,
-                "auto_order": False,
                 "enabled": True
             }]
 
@@ -120,7 +117,6 @@ class MandarakeMonitor:
             ex_kws = [k.strip() for k in rule.get("exclude_keywords", []) if k.strip()]
             match_mode = rule.get("match_mode", "and").lower()  # and 或 or
             max_price = rule.get("max_price", 0)
-            enable_auto_order = rule.get("auto_order", False)
 
             logger.debug(f"[Monitor] 检查规则: {rule_name} (分类: {cat_code}, 关键词: {kws})")
 
@@ -206,21 +202,8 @@ class MandarakeMonitor:
                 # 写入数据库归档
                 self.db.upsert_products_batch(rule_hits)
 
-                # 分发通知 (同时推送到已启用的邮箱、Discord、桌面弹窗与提示音)
+                # 分发通知 (推送到已启用的 Discord Webhook 与 SMTP 邮件)
                 self.notifier_mgr.dispatch(rule_hits, rule_name)
-
-                # 自动触发下单 (若该规则开启了关联自动下单)
-                if enable_auto_order:
-                    for target_item in rule_hits:
-                        logger.info(f"⚡ 自动下单触发: {target_item.get('title')}")
-                        self.auto_order.order_item(
-                            item_id=target_item["id"],
-                            title=target_item.get("title", ""),
-                            price=target_item.get("price", 0),
-                            img_url=target_item.get("img_url", ""),
-                            shop=target_item.get("shop", ""),
-                            trigger_type="auto"
-                        )
 
         self.last_check_status = f"正常完成，命中 {len(found_matches)} 件"
         self.save_seen_cache()

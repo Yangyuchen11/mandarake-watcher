@@ -23,7 +23,6 @@ from core.monitor import MandarakeMonitor
 from core.scheduler import MandarakeScheduler
 from core.terminal import terminal_mgr
 from notifiers.manager import NotificationManager
-from hooks.auto_order import auto_order_engine
 from web.app import create_app
 from core.config_helper import load_config, get_config_path
 
@@ -133,13 +132,13 @@ def main():
 
     banner = f"""
 ========================================================================
-       MANDARAKE 【ドール】 专区商品爬虫与自动下单控制看板
+       MANDARAKE 【ドール】 商品高频监控爬虫与行情看板
 ========================================================================
  * 运行环境: Python {sys.version.split()[0]}
  * 本地访问: http://{args.host}:{args.port}
  * 目标大类: 020114 (ドール 全下属分类深度覆盖)
  * 归档数据库: data/archive.db (SQLite WAL 高速模式)
- * 运行模式: {'🛡️ Dry-Run 仿真测试模式 (安全拦截扣款)' if auto_order_engine.dry_run else '⚡ 实盘下单模式'}
+ * 通知渠道: Discord Webhook / SMTP 邮件通知
 ========================================================================
 """
     print(banner)

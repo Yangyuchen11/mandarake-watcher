@@ -1,3 +1,3 @@
 """
-Mandarake Auto-Order Hooks Module
+Mandarake 扩展钩子模块
 """
