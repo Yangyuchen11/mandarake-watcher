@@ -32,11 +32,19 @@ class MandarakeMonitor:
         self.seen_ids: Set[str] = set()
         self.load_seen_cache()
 
+        # 上新记录监听器列表
+        self._record_listeners = []
+
         # 统计计数
         self.last_check_time: float = 0.0
         self.total_checks: int = 0
         self.total_matches: int = 0
         self.last_check_status: str = "就绪"
+
+    def add_record_listener(self, listener):
+        """注册上新提醒记录监听器"""
+        if callable(listener) and listener not in self._record_listeners:
+            self._record_listeners.append(listener)
 
     def load_seen_cache(self):
         """加载已发现商品 ID 缓存，防止重复报警"""
@@ -228,6 +236,34 @@ class MandarakeMonitor:
                 
                 # 写入数据库归档
                 self.db.upsert_products_batch(rule_hits)
+
+                # 写入上新提醒记录表
+                now_ts = int(time.time())
+                records_to_insert = []
+                for hit_item in rule_hits:
+                    records_to_insert.append({
+                        "item_id": str(hit_item.get("id", "")),
+                        "title": hit_item.get("title", ""),
+                        "price": hit_item.get("price", 0),
+                        "price_str": hit_item.get("price_str", ""),
+                        "url": hit_item.get("url", ""),
+                        "img_url": hit_item.get("img_url", ""),
+                        "shop": hit_item.get("shop", ""),
+                        "item_no": hit_item.get("item_no", ""),
+                        "category_code": hit_item.get("category_code", ""),
+                        "category_name": hit_item.get("category_name", ""),
+                        "rule_name": rule_name,
+                        "created_at": now_ts,
+                        "raw_details": json.dumps(hit_item, ensure_ascii=False) if isinstance(hit_item, dict) else ""
+                    })
+                self.db.insert_monitor_records(records_to_insert)
+
+                # 触发上新记录监听回调 (通知前端实时广播)
+                for cb in self._record_listeners:
+                    try:
+                        cb(records_to_insert)
+                    except Exception as e:
+                        logger.warning(f"触发上新记录监听回调异常: {e}")
 
                 # 分发通知 (推送到已启用的 Discord Webhook 与 SMTP 邮件)
                 self.notifier_mgr.dispatch(rule_hits, rule_name)

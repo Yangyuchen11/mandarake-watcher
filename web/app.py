@@ -48,6 +48,13 @@ def create_app(
     def favicon():
         return app.send_static_file("favicon.svg")
 
+    @app.route("/sw.js")
+    def sw():
+        response = app.send_static_file("sw.js")
+        response.headers["Content-Type"] = "application/javascript"
+        response.headers["Service-Worker-Allowed"] = "/"
+        return response
+
     # --- 分类体系接口 ---
 
     @app.route("/api/categories")
@@ -211,6 +218,8 @@ def create_app(
     @app.route("/api/monitor/check_now", methods=["POST"])
     def api_monitor_check_now():
         matches = monitor.check_once()
+        if matches:
+            broadcast_sse_event({"type": "monitor_records_updated", "count": len(matches)})
         return jsonify({"success": True, "matches_count": len(matches), "matches": matches})
 
     @app.route("/api/trigger_burst", methods=["POST"])
@@ -380,6 +389,136 @@ def create_app(
             ok = notifier_mgr.test_notifier("discord")
             return jsonify({"success": ok, "message": "Discord 测试消息已发送！" if ok else "测试失败，请检查 Webhook 配置"})
 
+    # --- 预设快捷标签配置（多端同步） ---
+
+    _sse_subscribers = []
+    _sse_subscribers_lock = threading.Lock()
+
+    def broadcast_sse_event(event_dict):
+        with _sse_subscribers_lock:
+            subs = list(_sse_subscribers)
+        for q in subs:
+            try:
+                q.put_nowait(event_dict)
+            except queue.Full:
+                pass
+            except Exception:
+                pass
+
+    def on_new_monitor_records(new_records):
+        try:
+            broadcast_sse_event({
+                "type": "monitor_records_updated",
+                "count": len(new_records),
+                "records": new_records[:5]
+            })
+        except Exception as e:
+            logger.warning(f"广播上新记录事件异常: {e}")
+
+    monitor.add_record_listener(on_new_monitor_records)
+
+    # --- 上新提醒记录接口 ---
+
+    @app.route("/api/monitor/records", methods=["GET"])
+    def api_get_monitor_records():
+        page = request.args.get("page", 1, type=int)
+        page_size = request.args.get("page_size", 20, type=int)
+        keyword = request.args.get("keyword", "").strip() or None
+        rule_name = request.args.get("rule_name", "").strip() or None
+
+        data = archive_db.query_monitor_records(
+            page=page,
+            page_size=page_size,
+            keyword=keyword,
+            rule_name=rule_name
+        )
+        return jsonify({
+            "success": True,
+            "records": data["items"],
+            "total": data["total"],
+            "page": data["page"],
+            "page_size": data["page_size"],
+            "total_pages": data["total_pages"]
+        })
+
+    @app.route("/api/monitor/records/stats", methods=["GET"])
+    def api_get_monitor_records_stats():
+        stats = archive_db.get_monitor_record_stats()
+        return jsonify({"success": True, "stats": stats})
+
+    @app.route("/api/monitor/records/<int:record_id>", methods=["DELETE"])
+    def api_delete_monitor_record(record_id: int):
+        ok = archive_db.delete_monitor_record(record_id)
+        return jsonify({"success": ok, "message": "记录已删除" if ok else "删除失败"})
+
+    @app.route("/api/monitor/records/clear", methods=["POST"])
+    def api_clear_monitor_records():
+        ok = archive_db.clear_monitor_records()
+        if ok:
+            broadcast_sse_event({"type": "monitor_records_cleared"})
+        return jsonify({"success": ok, "message": "上新提醒记录已清空" if ok else "清空失败"})
+
+    @app.route("/api/monitor/records/mock_from_db", methods=["POST"])
+    def api_mock_monitor_records():
+        """从现有新着/在库商品中提取若干条生成示例上新提醒记录（便于初始测试）"""
+        res = archive_db.query_products(page=1, page_size=10, is_new=1, is_in_stock=1)
+        items = res.get("items", [])
+        if not items:
+            res = archive_db.query_products(page=1, page_size=10, is_in_stock=1)
+            items = res.get("items", [])
+        if not items:
+            return jsonify({"success": False, "message": "库内暂无商品，无法生成示例记录"})
+
+        records = []
+        now_ts = int(time.time())
+        for it in items:
+            records.append({
+                "item_id": it["id"],
+                "title": it["title"],
+                "price": it["price"],
+                "price_str": it["price_str"],
+                "url": it["url"],
+                "img_url": it["img_url"],
+                "shop": it["shop"],
+                "item_no": it["item_no"],
+                "category_code": it["category_code"],
+                "category_name": it["category_name"],
+                "rule_name": "系统示例上新记录",
+                "created_at": now_ts,
+                "raw_details": json.dumps(it, ensure_ascii=False)
+            })
+        inserted = archive_db.insert_monitor_records(records)
+        broadcast_sse_event({"type": "monitor_records_updated", "count": inserted})
+        return jsonify({"success": True, "message": f"已成功录入 {inserted} 条示例提醒记录！"})
+
+    @app.route("/api/presets", methods=["GET", "POST"])
+    def api_presets():
+        if request.method == "POST":
+            body = request.get_json(silent=True) or {}
+            keywords = body.get("keywords")
+            if not isinstance(keywords, list):
+                return jsonify({"success": False, "message": "keywords 必须为列表"}), 400
+
+            clean_kw = []
+            for k in keywords:
+                if isinstance(k, str):
+                    s = k.strip()
+                    if s and s not in clean_kw:
+                        clean_kw.append(s[:50])
+
+            monitor.config["preset_keywords"] = clean_kw
+            save_config_file()
+            broadcast_sse_event({"type": "presets", "data": clean_kw})
+            return jsonify({"success": True, "keywords": clean_kw, "is_custom": True})
+
+        is_custom = "preset_keywords" in monitor.config and monitor.config["preset_keywords"] is not None
+        keywords = monitor.config.get("preset_keywords") if is_custom else []
+        return jsonify({
+            "success": True,
+            "keywords": keywords,
+            "is_custom": is_custom
+        })
+
     @app.route("/api/config", methods=["GET", "POST"])
     def api_config():
         if request.method == "POST":
@@ -420,6 +559,8 @@ def create_app(
 
             terminal_mgr.add_listener(on_log)
             archiver_engine.add_progress_listener(on_progress)
+            with _sse_subscribers_lock:
+                _sse_subscribers.append(msg_queue)
 
             try:
                 # 初始发送一次进度快照
@@ -434,6 +575,9 @@ def create_app(
             finally:
                 terminal_mgr.remove_listener(on_log)
                 archiver_engine.remove_progress_listener(on_progress)
+                with _sse_subscribers_lock:
+                    if msg_queue in _sse_subscribers:
+                        _sse_subscribers.remove(msg_queue)
 
         resp = Response(event_stream(), mimetype="text/event-stream")
         resp.headers["Cache-Control"] = "no-cache"

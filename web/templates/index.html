@@ -11,7 +11,7 @@
     <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="alternate icon" href="/favicon.ico">
     <link rel="manifest" href="/static/manifest.json">
-    <link rel="apple-touch-icon" href="/static/favicon.svg">
+    <link rel="apple-touch-icon" href="/static/icon-192.png">
     <link rel="stylesheet" href="/static/css/style.css?v=3">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
@@ -71,6 +71,11 @@
             <button class="tab-btn" data-tab="tab-monitor">
                 <i class="fa-solid fa-bell"></i>
                 <span class="tab-text">上新监控</span>
+            </button>
+            <button class="tab-btn" data-tab="tab-monitor-records">
+                <i class="fa-solid fa-clock-rotate-left"></i>
+                <span class="tab-text">上新记录</span>
+                <span class="tab-badge" id="monitor-records-badge" style="display: none;">0</span>
             </button>
             <button class="tab-btn" data-tab="tab-terminal">
                 <i class="fa-solid fa-terminal"></i>
@@ -170,6 +175,9 @@
                                 <button type="button" class="preset-mode-btn" id="preset-mode-and" data-mode="and" title="选中的标签必须同时满足 (AND 模式)">AND 全部</button>
                                 <button type="button" class="preset-mode-btn active" id="preset-mode-or" data-mode="or" title="选中的标签满足任一即可 (OR 模式)">OR 任一</button>
                             </div>
+                            <span class="preset-sync-status synced" id="preset-sync-status" title="点击可立即将当前标签同步至云端服务">
+                                <i class="fa-solid fa-cloud"></i> <span class="sync-text">已同步</span>
+                            </span>
                         </div>
                         
                         <div class="preset-tags-list" id="preset-tags-list">
@@ -585,6 +593,82 @@
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 选项卡: 上新记录 (用于存储每一条上新的提醒记录) -->
+        <section class="tab-content" id="tab-monitor-records">
+            <!-- 顶部控制与统计工具栏 -->
+            <div class="records-top-bar glass-panel">
+                <div class="top-bar-left">
+                    <div class="section-title-wrap">
+                        <i class="fa-solid fa-clock-rotate-left title-icon"></i>
+                        <div>
+                            <h2 class="section-title">上新提醒记录</h2>
+                            <p class="section-desc">已持久化保存监控巡检命中的每一条上新提醒记录，包含完整商品图文详情、触发规则与命中时间</p>
+                        </div>
+                    </div>
+                    <div class="records-stats-summary" id="records-stats-summary">
+                        <span class="stat-badge total"><i class="fa-solid fa-layer-group"></i> 累计记录: <b id="rec-total-count">0</b> 条</span>
+                        <span class="stat-badge today"><i class="fa-solid fa-bolt"></i> 今日新增: <b id="rec-today-count">0</b> 条</span>
+                    </div>
+                </div>
+                <div class="top-bar-actions">
+                    <button class="btn btn-secondary btn-sm" id="btn-rec-refresh" title="重新从数据库读取最新提醒记录">
+                        <i class="fa-solid fa-rotate"></i> 刷新记录
+                    </button>
+                    <button class="btn btn-secondary btn-sm" id="btn-rec-mock" title="若库内暂无记录，可一键导入最新在库商品作为示例记录">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> 导入示例记录
+                    </button>
+                    <button class="btn btn-danger btn-sm" id="btn-rec-clear" title="清空全部上新提醒历史">
+                        <i class="fa-solid fa-trash-can"></i> 清空记录
+                    </button>
+                </div>
+            </div>
+
+            <!-- 筛选与搜索工具栏 -->
+            <div class="records-filter-panel glass-panel">
+                <div class="filter-row">
+                    <div class="search-input-wrap flex-grow">
+                        <i class="fa-solid fa-magnifying-glass search-icon"></i>
+                        <input type="text" id="rec-keyword" class="form-input" placeholder="按商品标题、商品番号(Item No)、店铺搜索上新记录...">
+                    </div>
+                    <div class="filter-item">
+                        <label for="rec-rule-select"><i class="fa-solid fa-filter"></i> 触发规则：</label>
+                        <select id="rec-rule-select" class="form-select">
+                            <option value="">全部规则</option>
+                        </select>
+                    </div>
+                    <div class="filter-item">
+                        <label for="rec-page-size"><i class="fa-solid fa-list-ol"></i> 每页显示：</label>
+                        <select id="rec-page-size" class="form-select">
+                            <option value="10">10 件 / 页</option>
+                            <option value="20" selected>20 件 / 页</option>
+                            <option value="50">50 件 / 页</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-primary btn-sm" id="btn-rec-filter">
+                        <i class="fa-solid fa-magnifying-glass"></i> 筛选
+                    </button>
+                    <button class="btn btn-secondary btn-sm" id="btn-rec-reset">
+                        <i class="fa-solid fa-arrow-rotate-left"></i> 重置
+                    </button>
+                </div>
+            </div>
+
+            <!-- 记录列表容器 (卡片流，每页定量分页，不无限拉长) -->
+            <div class="records-list-wrapper" id="records-list-wrapper">
+                <div class="records-container" id="monitor-records-list">
+                    <!-- 动态渲染上新记录卡片 -->
+                </div>
+            </div>
+
+            <!-- 分页控件 -->
+            <div class="records-pagination-wrap" id="records-pagination-wrap">
+                <div class="pagination-info" id="records-pagination-info">显示 0 - 0 条，共 0 条记录</div>
+                <div class="pagination-controls" id="records-pagination-controls">
+                    <!-- 动态生成分页按钮 -->
                 </div>
             </div>
         </section>

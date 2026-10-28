@@ -106,6 +106,29 @@ class MandarakeArchiveDB:
                     value TEXT
                 );
                 """)
+
+                # 5. 上新提醒记录表
+                conn.execute("""
+                CREATE TABLE IF NOT EXISTS monitor_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    item_id TEXT NOT NULL DEFAULT '',
+                    title TEXT NOT NULL DEFAULT '',
+                    price INTEGER DEFAULT 0,
+                    price_str TEXT DEFAULT '',
+                    url TEXT DEFAULT '',
+                    img_url TEXT DEFAULT '',
+                    shop TEXT DEFAULT '',
+                    item_no TEXT DEFAULT '',
+                    category_code TEXT DEFAULT '',
+                    category_name TEXT DEFAULT '',
+                    rule_name TEXT DEFAULT '',
+                    created_at INTEGER DEFAULT 0,
+                    raw_details TEXT DEFAULT ''
+                );
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_records_created ON monitor_records(created_at DESC);")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_records_item ON monitor_records(item_id);")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_records_rule ON monitor_records(rule_name);")
                 conn.commit()
             logger.info(f"SQLite 归档数据库初始化完成: {self.db_path}")
         except Exception as e:
@@ -599,6 +622,177 @@ class MandarakeArchiveDB:
         except Exception as e:
             logger.error(f"清空订单记录失败: {e}")
             return False
+
+    # --- 上新提醒记录管理 ---
+
+    def insert_monitor_records(self, records: List[Dict[str, Any]]) -> int:
+        """
+        批量写入上新提醒记录
+        :param records: 提醒记录字典列表
+        :return: 成功写入的记录数量
+        """
+        if not records:
+            return 0
+
+        now_ts = int(time.time())
+        inserted = 0
+        try:
+            with self._get_connection() as conn:
+                for r in records:
+                    conn.execute("""
+                    INSERT INTO monitor_records (
+                        item_id, title, price, price_str, url, img_url,
+                        shop, item_no, category_code, category_name,
+                        rule_name, created_at, raw_details
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        str(r.get("item_id") or r.get("id") or ""),
+                        str(r.get("title") or ""),
+                        int(r.get("price") or 0),
+                        str(r.get("price_str") or ""),
+                        str(r.get("url") or ""),
+                        str(r.get("img_url") or ""),
+                        str(r.get("shop") or ""),
+                        str(r.get("item_no") or ""),
+                        str(r.get("category_code") or ""),
+                        str(r.get("category_name") or ""),
+                        str(r.get("rule_name") or "默认规则"),
+                        int(r.get("created_at") or now_ts),
+                        str(r.get("raw_details") or "")
+                    ))
+                    inserted += 1
+                conn.commit()
+            logger.info(f"成功保存 {inserted} 条上新提醒记录")
+            return inserted
+        except Exception as e:
+            logger.error(f"插入上新提醒记录失败: {e}")
+            return 0
+
+    def query_monitor_records(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        keyword: Optional[str] = None,
+        rule_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        分页检索上新提醒记录
+        """
+        page = max(1, int(page))
+        page_size = max(1, min(100, int(page_size)))
+        offset = (page - 1) * page_size
+
+        where_clauses = []
+        params = []
+
+        if keyword:
+            kw = f"%{keyword.strip()}%"
+            where_clauses.append("(title LIKE ? OR item_no LIKE ? OR shop LIKE ?)")
+            params.extend([kw, kw, kw])
+
+        if rule_name and rule_name.strip():
+            where_clauses.append("rule_name = ?")
+            params.append(rule_name.strip())
+
+        where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # 查询总数
+                count_query = f"SELECT COUNT(*) AS total FROM monitor_records {where_sql}"
+                cursor.execute(count_query, params)
+                total = cursor.fetchone()["total"]
+
+                # 分页查询记录列表
+                data_query = f"""
+                SELECT * FROM monitor_records
+                {where_sql}
+                ORDER BY created_at DESC, id DESC
+                LIMIT ? OFFSET ?
+                """
+                cursor.execute(data_query, params + [page_size, offset])
+                items = [dict(row) for row in cursor.fetchall()]
+
+                total_pages = math.ceil(total / page_size) if total > 0 else 1
+
+                return {
+                    "total": total,
+                    "items": items,
+                    "page": page,
+                    "page_size": page_size,
+                    "total_pages": total_pages
+                }
+        except Exception as e:
+            logger.error(f"查询上新提醒记录异常: {e}")
+            return {
+                "total": 0,
+                "items": [],
+                "page": page,
+                "page_size": page_size,
+                "total_pages": 1
+            }
+
+    def delete_monitor_record(self, record_id: Union[int, str]) -> bool:
+        """删除单条上新提醒记录"""
+        try:
+            with self._get_connection() as conn:
+                conn.execute("DELETE FROM monitor_records WHERE id = ?", (record_id,))
+                conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"删除上新提醒记录失败 (ID={record_id}): {e}")
+            return False
+
+    def clear_monitor_records(self) -> bool:
+        """清空所有上新提醒记录"""
+        try:
+            with self._get_connection() as conn:
+                conn.execute("DELETE FROM monitor_records;")
+                # 重置自增主键序列
+                conn.execute("DELETE FROM sqlite_sequence WHERE name = 'monitor_records';")
+                conn.commit()
+            logger.info("已清空全部上新提醒记录")
+            return True
+        except Exception as e:
+            logger.error(f"清空上新提醒记录失败: {e}")
+            return False
+
+    def get_monitor_record_stats(self) -> Dict[str, Any]:
+        """获取上新记录全局统计信息（包含记录总数、今日新增、规则列表）"""
+        try:
+            # 获取今天零点时间戳
+            now = time.localtime()
+            today_start = int(time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, 0, 0, -1)))
+
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+
+                # 总记录数
+                cursor.execute("SELECT COUNT(*) AS total FROM monitor_records")
+                total = cursor.fetchone()["total"]
+
+                # 今日新增数
+                cursor.execute("SELECT COUNT(*) AS today_count FROM monitor_records WHERE created_at >= ?", (today_start,))
+                today_count = cursor.fetchone()["today_count"]
+
+                # 所有触发过的规则名去重列表
+                cursor.execute("SELECT DISTINCT rule_name FROM monitor_records WHERE rule_name != '' ORDER BY rule_name ASC")
+                rules = [row["rule_name"] for row in cursor.fetchall()]
+
+                return {
+                    "total": total,
+                    "today_count": today_count,
+                    "rules": rules
+                }
+        except Exception as e:
+            logger.error(f"获取上新提醒记录统计失败: {e}")
+            return {
+                "total": 0,
+                "today_count": 0,
+                "rules": []
+            }
 
 
 # 全局单例

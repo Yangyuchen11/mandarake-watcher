@@ -25,6 +25,17 @@ const state = {
     selectedCategoriesForCrawl: [],
     lastLogId: 0,
     activeTab: "tab-products",
+
+    // 上新记录状态
+    records: {
+        page: 1,
+        pageSize: 20,
+        totalPages: 1,
+        totalItems: 0,
+        keyword: "",
+        ruleName: "",
+        unreadCount: 0
+    },
 };
 
 // 预设关键词本地持久化 Key 与内置默认娃娃特征标签
@@ -43,6 +54,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loadProducts();
     loadStats();
     loadMonitorConfig();
+    initMonitorRecords();
     initEventListeners();
     initMobileInteractions();
     
@@ -70,13 +82,33 @@ function initTabs() {
             }
             state.activeTab = targetId;
 
+            // 联动更新网页标题 (保证在浏览器标签页直观展示当前功能)
+            const tabTitleMap = {
+                "tab-products": "商品阅览 - Mandarake 【ドール】 专区",
+                "tab-crawler": "分类爬虫 - Mandarake 【ドール】 专区",
+                "tab-monitor": "上新监控 - Mandarake 【ドール】 专区",
+                "tab-monitor-records": "上新记录 - Mandarake 【ドール】 专区",
+                "tab-terminal": "实时终端 - Mandarake 【ドール】 专区"
+            };
+            if (tabTitleMap[targetId]) {
+                document.title = tabTitleMap[targetId];
+            }
+
             if (targetId === "tab-products") {
                 loadProducts();
             } else if (targetId === "tab-orders") {
-                        } else if (targetId === "tab-crawler") {
+            } else if (targetId === "tab-crawler") {
                 loadCrawlerStatus();
             } else if (targetId === "tab-monitor") {
                 loadMonitorConfig();
+            } else if (targetId === "tab-monitor-records") {
+                loadMonitorRecords(1);
+                loadRecordsStats();
+                const badge = document.getElementById("monitor-records-badge");
+                if (badge) {
+                    state.records.unreadCount = 0;
+                    badge.style.display = "none";
+                }
             }
         });
     });
@@ -598,11 +630,15 @@ function initEventListeners() {
         try {
             const res = await fetch("/api/monitor/check_now", { method: "POST" });
             const data = await res.json();
-            alert(`巡检完成！发现并命中 ${data.matches_count || 0} 件新上架目标商品！`);
+            showToast(`巡检完成！发现并命中 ${data.matches_count || 0} 件新上架目标商品！`, "success");
             loadStats();
             loadProducts();
+            loadRecordsStats();
+            if (state.activeTab === "tab-monitor-records") {
+                loadMonitorRecords(1);
+            }
         } catch (err) {
-            alert("执行巡检失败: " + err);
+            showToast("执行巡检失败: " + err, "error");
         } finally {
             if (btn) btn.disabled = false;
         }
@@ -1144,6 +1180,12 @@ function initSSE() {
                 appendTerminalLine(log);
             } else if (payload.type === "progress") {
                 updateCrawlerUI(payload.data);
+            } else if (payload.type === "presets" && Array.isArray(payload.data)) {
+                handleRemotePresetUpdate(payload.data);
+            } else if (payload.type === "monitor_records_updated") {
+                handleNewMonitorRecordsEvent(payload);
+            } else if (payload.type === "monitor_records_cleared") {
+                handleRecordsClearedEvent();
             }
         } catch (err) {
             // ignore heartbeat
@@ -1427,14 +1469,68 @@ function updateSchedulerUI(sched) {
     }
 }
 
-// --- 常用预设关键词管理与筛选 ---
+// --- 常用预设关键词管理与云端多端同步 ---
 
-function initPresetKeywords() {
+function updatePresetSyncStatus(status) {
+    const el = document.getElementById("preset-sync-status");
+    if (!el) return;
+    el.classList.remove("syncing", "synced", "offline");
+    if (status === "syncing") {
+        el.classList.add("syncing");
+        el.innerHTML = '<i class="fa-solid fa-cloud-arrow-up fa-fade"></i> <span class="sync-text">同步中</span>';
+        el.title = "正在与服务端同步预设快捷标签...";
+    } else if (status === "synced") {
+        el.classList.add("synced");
+        el.innerHTML = '<i class="fa-solid fa-cloud"></i> <span class="sync-text">已同步</span>';
+        el.title = "已与服务端保持多端同步，点击可重新强制推送";
+    } else if (status === "offline" || status === "error") {
+        el.classList.add("offline");
+        el.innerHTML = '<i class="fa-solid fa-cloud-slash"></i> <span class="sync-text">离线</span>';
+        el.title = "同步失败，当前正在使用设备本地缓存";
+    }
+}
+
+async function savePresetKeywordsToServer(keywords) {
+    updatePresetSyncStatus("syncing");
+    try {
+        const res = await fetch("/api/presets", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ keywords: keywords || [] })
+        }).then(r => r.json());
+        if (res && res.success) {
+            updatePresetSyncStatus("synced");
+            return true;
+        } else {
+            updatePresetSyncStatus("offline");
+            return false;
+        }
+    } catch (e) {
+        console.warn("同步预设标签至服务端异常:", e);
+        updatePresetSyncStatus("offline");
+        return false;
+    }
+}
+
+function handleRemotePresetUpdate(keywords) {
+    if (!Array.isArray(keywords)) return;
+    state.presetKeywords = keywords;
+    try {
+        localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(keywords));
+    } catch (_) {}
+    state.selectedPresets = state.selectedPresets.filter(k => state.presetKeywords.includes(k));
+    renderPresetKeywords();
+    updatePresetSyncStatus("synced");
+}
+
+async function initPresetKeywords() {
+    let localSaved = null;
     try {
         const saved = localStorage.getItem(PRESET_STORAGE_KEY);
         if (saved) {
             const parsed = JSON.parse(saved);
             if (Array.isArray(parsed) && parsed.length > 0) {
+                localSaved = parsed;
                 state.presetKeywords = parsed;
             } else {
                 state.presetKeywords = [...DEFAULT_PRESET_KEYWORDS];
@@ -1451,6 +1547,41 @@ function initPresetKeywords() {
 
     renderPresetKeywords();
     bindPresetEvents();
+
+    // 从服务端拉取云端预设进行多端同步
+    try {
+        updatePresetSyncStatus("syncing");
+        const res = await fetch("/api/presets").then(r => r.json());
+        if (res && res.success) {
+            if (res.is_custom && Array.isArray(res.keywords)) {
+                // 服务端已有全局自定义预设配置，以服务端为主
+                state.presetKeywords = res.keywords;
+                try {
+                    localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(res.keywords));
+                } catch (_) {}
+                state.selectedPresets = state.selectedPresets.filter(k => state.presetKeywords.includes(k));
+                renderPresetKeywords();
+                updatePresetSyncStatus("synced");
+            } else if (!res.is_custom) {
+                // 服务端尚未保存过自定义预设：
+                // 如果当前客户端（如电脑端）本地已有自定义修改（与内置默认不同），自动同步上传到服务端成为云端预设
+                const isDifferentFromDefault = localSaved && (
+                    localSaved.length !== DEFAULT_PRESET_KEYWORDS.length ||
+                    localSaved.some((kw, i) => kw !== DEFAULT_PRESET_KEYWORDS[i])
+                );
+                if (isDifferentFromDefault) {
+                    await savePresetKeywordsToServer(localSaved);
+                } else {
+                    updatePresetSyncStatus("synced");
+                }
+            }
+        } else {
+            updatePresetSyncStatus("offline");
+        }
+    } catch (e) {
+        console.warn("拉取服务端预设标签异常，继续使用本地预设:", e);
+        updatePresetSyncStatus("offline");
+    }
 }
 
 function renderPresetKeywords() {
@@ -1533,6 +1664,8 @@ function savePresetKeywords() {
     } catch (e) {
         console.error("保存预设标签异常:", e);
     }
+    // 同步到服务端（跨设备多端同步）
+    savePresetKeywordsToServer(state.presetKeywords);
 }
 
 function addPresetKeyword(newKw) {
@@ -1626,9 +1759,14 @@ function bindPresetEvents() {
         loadProducts();
     });
 
+    // 点击同步状态图标手动强制同步
+    document.getElementById("preset-sync-status")?.addEventListener("click", () => {
+        savePresetKeywordsToServer(state.presetKeywords);
+    });
+
     // 恢复默认预设
     document.getElementById("btn-reset-presets")?.addEventListener("click", () => {
-        if (confirm("确定要恢复默认预设标签列表吗？")) {
+        if (confirm("确定要恢复默认预设标签列表并同步到云端吗？")) {
             state.presetKeywords = [...DEFAULT_PRESET_KEYWORDS];
             savePresetKeywords();
             renderPresetKeywords();
@@ -1700,3 +1838,562 @@ function updateActiveFilterCount() {
         badge.style.display = "none";
     }
 }
+
+
+// 注册 PWA Service Worker (满足移动端可安装性检测)
+if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/sw.js", { scope: "/" })
+            .then(reg => {
+                console.log("[PWA] Service Worker 注册成功, scope:", reg.scope);
+            })
+            .catch(err => {
+                console.warn("[PWA] Service Worker 注册被跳过或失败:", err);
+            });
+    });
+}
+
+// ==========================================================================
+// 上新记录前端模块 (Monitor Records Module)
+// ==========================================================================
+
+function initMonitorRecords() {
+    // 1. 刷新记录按钮
+    const btnRefresh = document.getElementById("btn-rec-refresh");
+    btnRefresh?.addEventListener("click", () => {
+        const icon = btnRefresh.querySelector("i");
+        if (icon) icon.classList.add("fa-spin");
+        loadMonitorRecords(state.records.page).finally(() => {
+            setTimeout(() => {
+                if (icon) icon.classList.remove("fa-spin");
+            }, 400);
+        });
+        loadRecordsStats();
+    });
+
+    // 2. 关键词搜索
+    const kwInput = document.getElementById("rec-keyword");
+    kwInput?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            state.records.keyword = kwInput.value.trim();
+            loadMonitorRecords(1);
+        }
+    });
+
+    // 3. 筛选按钮
+    document.getElementById("btn-rec-filter")?.addEventListener("click", () => {
+        if (kwInput) state.records.keyword = kwInput.value.trim();
+        const ruleSelect = document.getElementById("rec-rule-select");
+        if (ruleSelect) state.records.ruleName = ruleSelect.value;
+        loadMonitorRecords(1);
+    });
+
+    // 4. 重置筛选
+    document.getElementById("btn-rec-reset")?.addEventListener("click", () => {
+        if (kwInput) kwInput.value = "";
+        const ruleSelect = document.getElementById("rec-rule-select");
+        if (ruleSelect) ruleSelect.value = "";
+        state.records.keyword = "";
+        state.records.ruleName = "";
+        loadMonitorRecords(1);
+    });
+
+    // 5. 规则筛选下拉联动
+    document.getElementById("rec-rule-select")?.addEventListener("change", (e) => {
+        state.records.ruleName = e.target.value;
+        loadMonitorRecords(1);
+    });
+
+    // 6. 每页显示数量变更联动
+    document.getElementById("rec-page-size")?.addEventListener("change", (e) => {
+        const sz = parseInt(e.target.value, 10);
+        if (sz > 0) {
+            state.records.pageSize = sz;
+            loadMonitorRecords(1);
+        }
+    });
+
+    // 7. 清空所有记录
+    document.getElementById("btn-rec-clear")?.addEventListener("click", () => {
+        clearMonitorRecords();
+    });
+
+    // 8. 导入示例记录 (便于初始体验)
+    document.getElementById("btn-rec-mock")?.addEventListener("click", () => {
+        mockMonitorRecords();
+    });
+
+    // 初始读取统计信息
+    loadRecordsStats();
+}
+
+/**
+ * 加载上新记录统计与规则列表
+ */
+async function loadRecordsStats() {
+    try {
+        const resp = await fetch("/api/monitor/records/stats");
+        const data = await resp.json();
+        if (data.success && data.stats) {
+            const stats = data.stats;
+            const totalEl = document.getElementById("rec-total-count");
+            const todayEl = document.getElementById("rec-today-count");
+            if (totalEl) totalEl.textContent = stats.total || 0;
+            if (todayEl) todayEl.textContent = stats.today_count || 0;
+
+            // 填充规则下拉框
+            const ruleSelect = document.getElementById("rec-rule-select");
+            if (ruleSelect && Array.isArray(stats.rules)) {
+                const currentVal = ruleSelect.value;
+                let html = '<option value="">全部规则</option>';
+                stats.rules.forEach(ruleName => {
+                    const selected = ruleName === currentVal ? "selected" : "";
+                    html += `<option value="${escapeHtml(ruleName)}" ${selected}>${escapeHtml(ruleName)}</option>`;
+                });
+                ruleSelect.innerHTML = html;
+            }
+        }
+    } catch (err) {
+        console.debug("获取上新记录统计失败:", err);
+    }
+}
+
+/**
+ * 加载分页上新记录
+ */
+async function loadMonitorRecords(page = 1) {
+    const container = document.getElementById("monitor-records-list");
+    if (!container) return;
+
+    state.records.page = page;
+
+    // 显示加载骨架状态
+    container.innerHTML = `
+        <div style="padding: 40px; text-align: center; color: var(--text-muted);">
+            <i class="fa-solid fa-spinner fa-spin fa-2x"></i>
+            <p style="margin-top: 10px; font-size: 13px;">正在加载上新提醒记录...</p>
+        </div>
+    `;
+
+    try {
+        const params = new URLSearchParams({
+            page: page,
+            page_size: state.records.pageSize,
+            keyword: state.records.keyword,
+            rule_name: state.records.ruleName
+        });
+
+        const resp = await fetch(`/api/monitor/records?${params.toString()}`);
+        const data = await resp.json();
+
+        if (!data.success) {
+            container.innerHTML = `<div class="records-empty-box"><p>读取记录失败: ${escapeHtml(data.message || '未知错误')}</p></div>`;
+            return;
+        }
+
+        state.records.totalItems = data.total;
+        state.records.totalPages = data.total_pages;
+
+        // 渲染记录与分页
+        renderMonitorRecords(data.records);
+        renderRecordsPagination(data.total, data.page, data.page_size, data.total_pages);
+
+        // 同步更新统计
+        const totalEl = document.getElementById("rec-total-count");
+        if (totalEl) totalEl.textContent = data.total;
+
+    } catch (err) {
+        container.innerHTML = `
+            <div class="records-empty-box">
+                <i class="fa-solid fa-triangle-exclamation empty-icon" style="color: #f87171;"></i>
+                <h3>加载上新提醒记录异常</h3>
+                <p>${escapeHtml(String(err))}</p>
+                <div class="actions">
+                    <button class="btn btn-secondary btn-sm" onclick="loadMonitorRecords(${page})">重试加载</button>
+                </div>
+            </div>
+        `;
+    }
+}
+
+/**
+ * 渲染记录列表
+ */
+function renderMonitorRecords(records) {
+    const container = document.getElementById("monitor-records-list");
+    if (!container) return;
+
+    if (!records || records.length === 0) {
+        container.innerHTML = `
+            <div class="records-empty-box">
+                <i class="fa-solid fa-inbox empty-icon"></i>
+                <h3>暂无上新提醒记录</h3>
+                <p>当后台监控巡检命中符合您关注规则的新上架商品时，会立即自动将商品图文、价格与详情永久记录在此处。</p>
+                <div class="actions">
+                    <button class="btn btn-primary btn-sm" onclick="checkMonitorNow()">
+                        <i class="fa-solid fa-magnifying-glass"></i> 立即巡检一次
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="mockMonitorRecords()">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> 导入示例记录体验
+                    </button>
+                </div>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = "";
+    records.forEach(item => {
+        const card = createMonitorRecordCard(item);
+        container.appendChild(card);
+    });
+}
+
+/**
+ * 创建单条上新记录卡片 DOM
+ */
+function createMonitorRecordCard(item) {
+    const card = document.createElement("div");
+    card.className = "record-card";
+    card.setAttribute("data-record-id", item.id);
+
+    // 缩略图 fallback 与商品详情链接
+    const imgUrl = item.img_url || "https://order.mandarake.co.jp/content/img/icon/shortcut/192.png";
+    const itemUrl = item.url || `https://order.mandarake.co.jp/order/detailPage/item?itemCode=${item.item_id}`;
+    const priceText = item.price ? `${item.price.toLocaleString()}円` : "价格未标明";
+    const shopText = item.shop || "まんだらけ";
+    const ruleText = item.rule_name || "默认监控规则";
+    const catText = item.category_name || "ドール";
+    const itemNoText = item.item_no || item.item_id;
+
+    const fullTimeStr = formatTimestamp(item.created_at);
+    const relTimeStr = formatRelativeTime(item.created_at);
+
+    card.innerHTML = `
+        <div class="record-thumb-wrap" title="点击新窗口打开商品图片或直达官网" onclick="window.open('${escapeHtml(itemUrl)}', '_blank', 'noopener,noreferrer')">
+            <img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(item.title)}" loading="lazy" onerror="this.src='https://order.mandarake.co.jp/content/img/icon/shortcut/192.png'">
+            <span class="record-thumb-tag">⚡ 上新命中</span>
+        </div>
+        <div class="record-details">
+            <div class="record-badges-row">
+                <span class="rec-badge rule" title="触发该提醒的监控规则"><i class="fa-solid fa-crosshairs"></i> ${escapeHtml(ruleText)}</span>
+                <span class="rec-badge shop" title="所属店铺"><i class="fa-solid fa-store"></i> ${escapeHtml(shopText)}</span>
+                <span class="rec-badge cat" title="分类路径: ${escapeHtml(catText)}"><i class="fa-solid fa-tag"></i> ${escapeHtml(catText)}</span>
+                <span class="rec-badge item-no" title="商品编号"><i class="fa-solid fa-barcode"></i> ${escapeHtml(itemNoText)}</span>
+            </div>
+            <h3 class="record-title" title="${escapeHtml(item.title)}" onclick="window.open('${escapeHtml(itemUrl)}', '_blank', 'noopener,noreferrer')">
+                ${escapeHtml(item.title)}
+            </h3>
+            <div class="record-bottom-row">
+                <div class="record-price-wrap">
+                    <span class="record-price">${priceText}</span>
+                    <span class="record-price-str">${escapeHtml(item.price_str || '')}</span>
+                </div>
+                <div class="record-time-meta" title="提醒触发时间：${escapeHtml(fullTimeStr)}">
+                    <i class="fa-regular fa-clock"></i>
+                    <span>${escapeHtml(fullTimeStr)}</span>
+                    <span class="rel-time">(${relTimeStr})</span>
+                </div>
+            </div>
+        </div>
+        <div class="record-actions">
+            <button class="btn btn-primary btn-sm btn-open-url" title="在新标签页中打开 Mandarake 官网详情页">
+                <i class="fa-solid fa-arrow-up-right-from-square"></i> 官网直达
+            </button>
+            <button class="btn btn-secondary btn-sm btn-copy-url" title="复制 Mandarake 官网商品链接">
+                <i class="fa-regular fa-copy"></i> 复制链接
+            </button>
+            <button class="btn btn-danger btn-sm btn-del-record" title="从历史提醒记录中删除该条目">
+                <i class="fa-solid fa-trash-can"></i> 删除
+            </button>
+        </div>
+    `;
+
+    // 绑定卡片内按钮事件
+    card.querySelector(".btn-open-url")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        window.open(itemUrl, "_blank", "noopener,noreferrer");
+    });
+
+    card.querySelector(".btn-copy-url")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        copyTextToClipboard(itemUrl);
+    });
+
+    card.querySelector(".btn-del-record")?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        deleteMonitorRecord(item.id, card);
+    });
+
+    return card;
+}
+
+/**
+ * 渲染上新记录分页控件
+ */
+function renderRecordsPagination(total, page, pageSize, totalPages) {
+    const infoEl = document.getElementById("records-pagination-info");
+    const controlsEl = document.getElementById("records-pagination-controls");
+    if (!controlsEl) return;
+
+    if (total === 0) {
+        if (infoEl) infoEl.textContent = "暂无记录";
+        controlsEl.innerHTML = "";
+        return;
+    }
+
+    const start = (page - 1) * pageSize + 1;
+    const end = Math.min(page * pageSize, total);
+    if (infoEl) {
+        infoEl.textContent = `显示第 ${start} - ${end} 条，共 ${total} 条记录 (第 ${page} / ${totalPages} 页)`;
+    }
+
+    if (totalPages <= 1) {
+        controlsEl.innerHTML = "";
+        return;
+    }
+
+    let html = `<button class="page-btn" data-rec-page="${page - 1}" ${page <= 1 ? 'disabled' : ''}>上一页</button>`;
+
+    // 缩略分页算法
+    let pages = [];
+    if (totalPages <= 7) {
+        for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+        pages.push(1);
+        if (page > 3) pages.push("...");
+        for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) {
+            pages.push(i);
+        }
+        if (page < totalPages - 2) pages.push("...");
+        pages.push(totalPages);
+    }
+
+    pages.forEach(p => {
+        if (p === "...") {
+            html += `<span class="page-ellipsis" style="color:var(--text-muted);padding:0 4px;">...</span>`;
+        } else {
+            html += `<button class="page-btn ${p === page ? 'active' : ''}" data-rec-page="${p}">${p}</button>`;
+        }
+    });
+
+    html += `<button class="page-btn" data-rec-page="${page + 1}" ${page >= totalPages ? 'disabled' : ''}>下一页</button>`;
+
+    controlsEl.innerHTML = html;
+
+    // 绑定分页点击事件
+    controlsEl.querySelectorAll(".page-btn[data-rec-page]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const p = parseInt(btn.getAttribute("data-rec-page"), 10);
+            if (p && p !== page && p >= 1 && p <= totalPages) {
+                loadMonitorRecords(p);
+                const wrap = document.getElementById("records-list-wrapper");
+                if (wrap) {
+                    wrap.scrollIntoView({ behavior: "smooth", block: "start" });
+                }
+            }
+        });
+    });
+}
+
+/**
+ * 删除单条上新提醒记录
+ */
+async function deleteMonitorRecord(recordId, cardEl) {
+    if (!recordId) return;
+
+    try {
+        const resp = await fetch(`/api/monitor/records/${recordId}`, { method: "DELETE" });
+        const data = await resp.json();
+        if (data.success) {
+            showToast("已删除该条上新提醒记录", "info");
+            if (cardEl) {
+                cardEl.style.transition = "all 0.3s ease";
+                cardEl.style.opacity = "0";
+                cardEl.style.transform = "translateX(30px)";
+                setTimeout(() => {
+                    cardEl.remove();
+                    // 若当前卡片为本页最后一条，重新加载当前页或上一页
+                    const remaining = document.querySelectorAll(".record-card").length;
+                    if (remaining === 0) {
+                        const targetPage = Math.max(1, state.records.page - 1);
+                        loadMonitorRecords(targetPage);
+                    }
+                    loadRecordsStats();
+                }, 300);
+            } else {
+                loadMonitorRecords(state.records.page);
+                loadRecordsStats();
+            }
+        } else {
+            showToast(data.message || "删除失败", "error");
+        }
+    } catch (err) {
+        showToast(`删除异常: ${err}`, "error");
+    }
+}
+
+/**
+ * 一键清空所有上新提醒记录
+ */
+async function clearMonitorRecords() {
+    if (!confirm("⚠️ 确定要清空全部上新提醒记录吗？\n所有历史提醒条目将被移除，此操作不可撤销。")) {
+        return;
+    }
+
+    try {
+        const resp = await fetch("/api/monitor/records/clear", { method: "POST" });
+        const data = await resp.json();
+        if (data.success) {
+            showToast("已清空所有上新提醒记录", "success");
+            loadMonitorRecords(1);
+            loadRecordsStats();
+        } else {
+            showToast(data.message || "清空失败", "error");
+        }
+    } catch (err) {
+        showToast(`清空异常: ${err}`, "error");
+    }
+}
+
+/**
+ * 导入示例上新记录 (辅助体验)
+ */
+async function mockMonitorRecords() {
+    try {
+        const resp = await fetch("/api/monitor/records/mock_from_db", { method: "POST" });
+        const data = await resp.json();
+        if (data.success) {
+            showToast(data.message || "示例记录导入成功！", "success");
+            loadMonitorRecords(1);
+            loadRecordsStats();
+        } else {
+            showToast(data.message || "导入失败", "warning");
+        }
+    } catch (err) {
+        showToast(`操作异常: ${err}`, "error");
+    }
+}
+
+/**
+ * 响应 SSE 监控上新记录广播
+ */
+function handleNewMonitorRecordsEvent(payload) {
+    const count = payload.count || 1;
+    // 更新上新记录选项卡右上角未读 badge
+    const badge = document.getElementById("monitor-records-badge");
+    if (badge) {
+        state.records.unreadCount = (state.records.unreadCount || 0) + count;
+        badge.textContent = state.records.unreadCount;
+        badge.style.display = "inline-flex";
+    }
+
+    // 若当前正在查看“上新记录”页面，自动静默刷新当前列表
+    if (state.activeTab === "tab-monitor-records") {
+        loadMonitorRecords(state.records.page);
+        loadRecordsStats();
+    } else {
+        showToast(`🔔 监控巡检命中新商品！已存入 ${count} 条上新记录`, "success");
+    }
+}
+
+/**
+ * 响应 SSE 记录清空广播
+ */
+function handleRecordsClearedEvent() {
+    if (state.activeTab === "tab-monitor-records") {
+        loadMonitorRecords(1);
+        loadRecordsStats();
+    }
+}
+
+/**
+ * 复制文本至剪贴板
+ */
+function copyTextToClipboard(text) {
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+            showToast("商品官网链接已复制到剪贴板！", "success");
+        }).catch(() => {
+            fallbackCopy(text);
+        });
+    } else {
+        fallbackCopy(text);
+    }
+}
+
+function fallbackCopy(text) {
+    const input = document.createElement("input");
+    input.value = text;
+    document.body.appendChild(input);
+    input.select();
+    try {
+        document.execCommand("copy");
+        showToast("商品官网链接已复制到剪贴板！", "success");
+    } catch (e) {
+        prompt("请手动复制链接：", text);
+    }
+    document.body.removeChild(input);
+}
+
+/**
+ * 格式化时间戳为 YYYY-MM-DD HH:mm:ss
+ */
+function formatTimestamp(ts) {
+    if (!ts) return "未知时间";
+    // 如果是秒级时间戳转换为毫秒
+    const ms = ts < 10000000000 ? ts * 1000 : ts;
+    const d = new Date(ms);
+    const pad = (n) => String(n).padStart(2, "0");
+    const y = d.getFullYear();
+    const m = pad(d.getMonth() + 1);
+    const date = pad(d.getDate());
+    const h = pad(d.getHours());
+    const min = pad(d.getMinutes());
+    const s = pad(d.getSeconds());
+    return `${y}-${m}-${date} ${h}:${min}:${s}`;
+}
+
+/**
+ * 计算人性化相对时间 (刚刚 / X 分钟前 / X 小时前 / 昨天 / 日期)
+ */
+function formatRelativeTime(ts) {
+    if (!ts) return "";
+    const ms = ts < 10000000000 ? ts * 1000 : ts;
+    const diffSec = Math.floor((Date.now() - ms) / 1000);
+
+    if (diffSec < 60) {
+        return "刚刚";
+    } else if (diffSec < 3600) {
+        return `${Math.floor(diffSec / 60)} 分钟前`;
+    } else if (diffSec < 86400) {
+        return `${Math.floor(diffSec / 3600)} 小时前`;
+    } else if (diffSec < 172800) {
+        return "昨天";
+    } else {
+        const days = Math.floor(diffSec / 86400);
+        return days < 30 ? `${days} 天前` : `${Math.floor(days / 30)} 个月前`;
+    }
+}
+
+// 暴露供 HTML 内联事件调用的全局辅助函数
+function checkMonitorNow() {
+    const btn = document.getElementById("btn-monitor-check-now");
+    if (btn) {
+        btn.click();
+    } else {
+        fetch("/api/monitor/check_now", { method: "POST" })
+            .then(res => res.json())
+            .then(data => {
+                showToast(`巡检完成！命中 ${data.matches_count || 0} 件新商品`, "success");
+                loadMonitorRecords(1);
+                loadRecordsStats();
+            });
+    }
+}
+
+window.checkMonitorNow = checkMonitorNow;
+window.mockMonitorRecords = mockMonitorRecords;
+window.loadMonitorRecords = loadMonitorRecords;

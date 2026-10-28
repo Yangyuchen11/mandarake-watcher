@@ -45,5 +45,9 @@
       "receiver_email": "",
       "use_ssl": true
     }
-  }
+  },
+  "preset_keywords": [
+    "MDD", "DDP", "DD", "SDGr", "SD13", "SD17", "幼SD", "DearSD",
+    "ブライス", "カスタムヘッド", "ウィッグ", "アイ", "アウトフィット", "難あり"
+  ]
 }
