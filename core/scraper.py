@@ -256,8 +256,15 @@ class MandarakeScraper:
 
                 now_ts = int(time.time())
 
-                # 智能识别细分子分类
-                final_cat_code, final_cat_name = category_mgr.infer_category(title, current_cat_code)
+                # 优先提取官网链接中的原始官方分类代码，保证100%忠于官网
+                official_cat = ""
+                if item_href:
+                    parsed_qs = parse_qs(urlparse(item_href).query)
+                    if "categoryCode" in parsed_qs and parsed_qs["categoryCode"]:
+                        official_cat = parsed_qs["categoryCode"][0].strip()
+
+                cat_code_to_use = official_cat if (official_cat and category_mgr.is_valid_doll_code(official_cat)) else (current_cat_code or ROOT_DOLL_CODE)
+                final_cat_code, final_cat_name = category_mgr.infer_category(title, cat_code_to_use)
 
                 items.append({
                     "id": item_id,

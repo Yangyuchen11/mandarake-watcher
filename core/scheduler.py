@@ -204,7 +204,7 @@ class MandarakeScheduler:
                         logger.info("爆发检测模式结束，恢复日常平缓监控")
 
                 # 3. 执行日常上新与规则监控检测
-                self.monitor.check_once()
+                matches = self.monitor.check_once()
 
                 # 4. 根据模式确定睡眠间隔
                 sched_cfg = self.monitor.config.get("schedule", {})
@@ -213,6 +213,8 @@ class MandarakeScheduler:
                     sleep_interval = max(0.5, burst_interval)
                 else:
                     sleep_interval = max(3, int(sched_cfg.get("interval_seconds", 60)))
+                    if not matches:
+                        logger.info(f"⚡ [监控巡检] 第 {self.monitor.total_checks} 轮扫描完成，暂无新上架商品 (下次扫描在 {sleep_interval} 秒后)")
 
                 # 睡眠可中断
                 self._stop_event.wait(timeout=sleep_interval)

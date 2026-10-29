@@ -25,15 +25,34 @@ class DiscordNotifier(BaseNotifier):
         url = str(item.get("url") or "https://order.mandarake.co.jp/").strip()
         img_url = str(item.get("img_url") or "").strip()
         item_id = str(item.get("item_no") or item.get("id") or "").strip()
+        is_soldout = item.get("instant_soldout") or (int(item.get("is_in_stock", 1)) == 0)
+        is_restock = bool(item.get("is_restock"))
+
+        if is_soldout:
+            embed_title = f"⚡ [已秒切] {title[:190]}"
+            embed_desc = f"🔴 **上新即秒切 (已售罄)** · [👉 查看 Mandarake 官网详情]({url})"
+            color = 0xEF4444  # 醒目红
+            status_text = "❌ 已售罄 (检测前已被买走)"
+        elif is_restock:
+            embed_title = f"🔄 [补货复活] {title[:190]}"
+            embed_desc = f"🟢 **此前售罄商品重新在库** · [👉 点击进入 Mandarake 官网抢购]({url})"
+            color = 0x3B82F6  # 蓝色 (补货)
+            status_text = "🔄 重新在库"
+        else:
+            embed_title = f"🛒 {title[:190]}"
+            embed_desc = f"🟢 **在库有货** · [👉 点击进入 Mandarake 官网购买]({url})"
+            color = 0xFF5722  # Mandarake 品牌醒目橙红
+            status_text = "🟢 在库有货"
 
         embed = {
-            "title": f"🛒 {title[:200]}",
+            "title": embed_title,
             "url": url,
-            "description": f"🟢 **在库有货** · [👉 点击进入 Mandarake 官网购买]({url})",
-            "color": 0xFF5722,  # Mandarake 品牌醒目橙红
+            "description": embed_desc,
+            "color": color,
             "fields": [
                 {"name": "💰 价格 (税込)", "value": f"**{price}**", "inline": True},
                 {"name": "🏬 发送店舗", "value": shop or "未标明", "inline": True},
+                {"name": "📦 当前状态", "value": status_text, "inline": True},
                 {"name": "📂 分类目录", "value": cat or "ドール", "inline": True},
             ],
             "footer": {
@@ -121,17 +140,21 @@ class DiscordNotifier(BaseNotifier):
             total_batches = len(batches)
             all_success = True
 
+            in_stock_cnt = sum(1 for it in items if int(it.get("is_in_stock", 1)) == 1 and not it.get("instant_soldout"))
+            soldout_cnt = len(items) - in_stock_cnt
+            stat_parts = []
+            if in_stock_cnt > 0:
+                stat_parts.append(f"🟢 在库 {in_stock_cnt} 件")
+            if soldout_cnt > 0:
+                stat_parts.append(f"🔴 秒切 {soldout_cnt} 件")
+            stat_summary = f" ({', '.join(stat_parts)})" if stat_parts else ""
+
             for idx, batch_embeds in enumerate(batches, 1):
-                if total_batches > 1:
-                    content = (
-                        f"🎯 **【Mandarake 在库新商品提醒】** 命中规则：`{rule_name or '默认规则'}`，"
-                        f"发现 **{len(items)}** 件新品 (批次 {idx}/{total_batches})："
-                    )
-                else:
-                    content = (
-                        f"🎯 **【Mandarake 在库新商品提醒】** 命中规则：`{rule_name or '默认规则'}`，"
-                        f"发现 **{len(items)}** 件新品："
-                    )
+                batch_str = f" (批次 {idx}/{total_batches})" if total_batches > 1 else ""
+                content = (
+                    f"🎯 **【Mandarake 上新提醒】** 命中规则：`{rule_name or '默认规则'}`"
+                    f"{stat_summary}{batch_str}："
+                )
 
                 payload = {
                     "username": "Mandarake 监控助手",

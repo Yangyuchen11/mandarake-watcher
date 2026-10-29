@@ -24,6 +24,7 @@ const state = {
 
     selectedCategoriesForCrawl: [],
     lastLogId: 0,
+    terminalLogs: [],
     activeTab: "tab-products",
 
     // 上新记录状态
@@ -49,6 +50,7 @@ const DEFAULT_PRESET_KEYWORDS = [
 document.addEventListener("DOMContentLoaded", () => {
     initTabs();
     initSSE();
+    loadTerminalLogs();
     loadCategories();
     initPresetKeywords();
     loadProducts();
@@ -108,6 +110,13 @@ function initTabs() {
                 if (badge) {
                     state.records.unreadCount = 0;
                     badge.style.display = "none";
+                }
+            } else if (targetId === "tab-terminal") {
+                renderTerminalLogs();
+                const termBody = document.getElementById("terminal-output-container");
+                const autoScrollCheck = document.getElementById("terminal-autoscroll");
+                if (termBody && autoScrollCheck && autoScrollCheck.checked) {
+                    termBody.scrollTop = termBody.scrollHeight;
                 }
             }
         });
@@ -462,11 +471,23 @@ function initEventListeners() {
                 }
     });
 
-    // 17. 终端控制
+    // 17. 终端控制与过滤
     document.getElementById("btn-clear-terminal")?.addEventListener("click", async () => {
         await fetch("/api/terminal/clear", { method: "POST" });
-        const container = document.getElementById("terminal-output-container");
-        if (container) container.innerHTML = `<div class="log-line info">[SYS] 控制台已清屏</div>`;
+        state.terminalLogs = [];
+        renderTerminalLogs();
+    });
+
+    document.getElementById("terminal-level-select")?.addEventListener("change", () => {
+        renderTerminalLogs();
+    });
+
+    let searchDebounceTimer = null;
+    document.getElementById("terminal-search")?.addEventListener("input", () => {
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(() => {
+            renderTerminalLogs();
+        }, 150);
     });
 
     // 18. 监控频率与重试参数保存
@@ -1197,30 +1218,128 @@ function initSSE() {
     };
 }
 
-function appendTerminalLine(log) {
+const LOG_LEVEL_WEIGHTS = {
+    "DEBUG": 10,
+    "INFO": 20,
+    "WARNING": 30,
+    "WARN": 30,
+    "ERROR": 40,
+    "CRITICAL": 50
+};
+
+function shouldDisplayLog(log) {
+    if (!log) return false;
+    const filterSelect = document.getElementById("terminal-level-select");
+    const searchInput = document.getElementById("terminal-search");
+
+    const curLevel = filterSelect ? filterSelect.value : "INFO";
+    if (curLevel && curLevel !== "ALL") {
+        const minWeight = LOG_LEVEL_WEIGHTS[curLevel.toUpperCase()] || 20;
+        const logWeight = LOG_LEVEL_WEIGHTS[(log.level || "INFO").toUpperCase()] || 20;
+        if (logWeight < minWeight) {
+            return false;
+        }
+    }
+
+    const keyword = searchInput ? searchInput.value.trim().toLowerCase() : "";
+    if (keyword) {
+        const text = `${log.formatted || ""} ${log.message || ""} ${log.logger || ""}`.toLowerCase();
+        if (!text.includes(keyword)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function createLogLineElement(log) {
+    const line = document.createElement("div");
+    const lvl = (log.level || "info").toLowerCase();
+    line.className = `log-line ${lvl === "warn" ? "warning" : lvl}`;
+    line.textContent = log.formatted || `[${log.time_short || ""}] [${log.level || "INFO"}] ${log.message || ""}`;
+    return line;
+}
+
+function renderTerminalLogs() {
     const termBody = document.getElementById("terminal-output-container");
     const autoScrollCheck = document.getElementById("terminal-autoscroll");
     if (!termBody) return;
 
-    // 检查等级过滤
-    const filterSelect = document.getElementById("terminal-level-select");
-    const curLevel = filterSelect ? filterSelect.value : "ALL";
-    if (curLevel !== "ALL" && log.level !== curLevel) {
-        return;
-    }
+    termBody.innerHTML = "";
 
-    const line = document.createElement("div");
-    line.className = `log-line ${(log.level || 'info').toLowerCase()}`;
-    line.textContent = log.formatted || `[${log.time_short}] [${log.level}] ${log.message}`;
-    termBody.appendChild(line);
+    const logs = state.terminalLogs || [];
+    const matchedLogs = logs.filter(shouldDisplayLog);
 
-    // 限制最大行数
-    if (termBody.children.length > 500) {
-        termBody.removeChild(termBody.firstElementChild);
+    if (matchedLogs.length === 0) {
+        const emptyDiv = document.createElement("div");
+        emptyDiv.className = "log-line debug";
+        emptyDiv.textContent = "[SYS] 暂无符合当前过滤条件的日志输出...";
+        termBody.appendChild(emptyDiv);
+    } else {
+        const maxDisplay = 500;
+        const sliceLogs = matchedLogs.slice(-maxDisplay);
+        const frag = document.createDocumentFragment();
+        sliceLogs.forEach(log => {
+            frag.appendChild(createLogLineElement(log));
+        });
+        termBody.appendChild(frag);
     }
 
     if (autoScrollCheck && autoScrollCheck.checked) {
         termBody.scrollTop = termBody.scrollHeight;
+    }
+}
+
+async function loadTerminalLogs() {
+    try {
+        const res = await fetch("/api/terminal/logs?limit=500&level=ALL");
+        const data = await res.json();
+        if (data && data.success && Array.isArray(data.logs)) {
+            state.terminalLogs = data.logs;
+            if (data.logs.length > 0) {
+                state.lastLogId = data.logs[data.logs.length - 1].id || 0;
+            }
+            renderTerminalLogs();
+        }
+    } catch (err) {
+        console.debug("获取后台运行终端历史日志失败:", err);
+    }
+}
+
+function appendTerminalLine(log) {
+    if (!log) return;
+    if (!state.terminalLogs) state.terminalLogs = [];
+
+    // 去重避免重复渲染
+    if (log.id && state.terminalLogs.some(existing => existing.id === log.id)) {
+        return;
+    }
+
+    state.terminalLogs.push(log);
+    if (log.id) state.lastLogId = log.id;
+    if (state.terminalLogs.length > 1000) {
+        state.terminalLogs.shift();
+    }
+
+    const termBody = document.getElementById("terminal-output-container");
+    const autoScrollCheck = document.getElementById("terminal-autoscroll");
+    if (!termBody) return;
+
+    if (shouldDisplayLog(log)) {
+        // 清除“暂无符合条件”占位行
+        const placeholder = termBody.querySelector(".log-line.debug");
+        if (placeholder && placeholder.textContent.includes("暂无符合当前过滤条件")) {
+            placeholder.remove();
+        }
+
+        termBody.appendChild(createLogLineElement(log));
+
+        if (termBody.children.length > 500) {
+            termBody.removeChild(termBody.firstElementChild);
+        }
+
+        if (autoScrollCheck && autoScrollCheck.checked) {
+            termBody.scrollTop = termBody.scrollHeight;
+        }
     }
 }
 

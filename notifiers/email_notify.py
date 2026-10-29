@@ -36,30 +36,54 @@ class EmailNotifier(BaseNotifier):
     def _build_html(self, items: List[Dict[str, Any]], rule_name: str) -> str:
         """构建现代响应式 HTML 邮件内容"""
         rows = []
-        for it in items[:15]:
+        for it in items[:20]:
             img_src = it.get("img_url") or "https://order.mandarake.co.jp/content/img/icon/shortcut/192.png"
             img_tag = f'<img src="{img_src}" width="110" height="90" style="border-radius:6px;object-fit:cover;display:block;" />'
-            price_val = it.get("price_str") or f"{it.get('price', 0):,}円"
+            price_val = it.get("price_str") or f"{int(it.get('price') or 0):,}円"
             shop = it.get("shop") or "まんだらけ"
             cat = it.get("category_name") or "ドール"
             url = it.get("url") or f"https://order.mandarake.co.jp/order/detailPage/item?itemCode={it.get('id')}&lang=ja"
+            is_soldout = it.get("instant_soldout") or (int(it.get("is_in_stock", 1)) == 0)
+            is_restock = bool(it.get("is_restock"))
+
+            if is_soldout:
+                status_tag = '<span style="display:inline-block;padding:2px 8px;background:#ef4444;color:#fff;border-radius:4px;font-size:11px;font-weight:bold;margin-left:6px;">⚡ 秒切已售罄</span>'
+                btn_style = "background:#475569;color:#e2e8f0;"
+                btn_text = "查看详情"
+            elif is_restock:
+                status_tag = '<span style="display:inline-block;padding:2px 8px;background:#3b82f6;color:#fff;border-radius:4px;font-size:11px;font-weight:bold;margin-left:6px;">🔄 补货在库</span>'
+                btn_style = "background:#3b82f6;color:#ffffff;"
+                btn_text = "官网抢购"
+            else:
+                status_tag = '<span style="display:inline-block;padding:2px 8px;background:#10b981;color:#fff;border-radius:4px;font-size:11px;font-weight:bold;margin-left:6px;">🟢 在库有货</span>'
+                btn_style = "background:#ff5722;color:#ffffff;"
+                btn_text = "官网抢购"
 
             rows.append(f"""
             <tr style="border-bottom:1px solid #2d3748;">
                 <td style="padding:12px;text-align:center;width:120px;">{img_tag}</td>
                 <td style="padding:12px;">
-                    <div style="font-size:11px;color:#9ca3af;margin-bottom:4px;">{cat} · 发送店: {shop}</div>
+                    <div style="font-size:11px;color:#9ca3af;margin-bottom:4px;">{cat} · 发送店: {shop} {status_tag}</div>
                     <div style="font-size:14px;font-weight:bold;color:#f3f4f6;line-height:1.4;margin-bottom:6px;">{it.get('title')}</div>
                     <div style="font-size:12px;color:#9ca3af;">编号/ID: {it.get('item_no') or it.get('id')}</div>
                 </td>
                 <td style="padding:12px;font-size:16px;font-weight:bold;color:#ff5722;white-space:nowrap;text-align:right;">{price_val}</td>
                 <td style="padding:12px;text-align:center;white-space:nowrap;width:100px;">
-                    <a href="{url}" style="display:inline-block;padding:8px 16px;background:#ff5722;color:#ffffff;text-decoration:none;border-radius:6px;font-size:12px;font-weight:bold;">官网直达</a>
+                    <a href="{url}" style="display:inline-block;padding:8px 16px;{btn_style};text-decoration:none;border-radius:6px;font-size:12px;font-weight:bold;">{btn_text}</a>
                 </td>
             </tr>
             """)
 
         rows_html = "".join(rows)
+
+        in_stock_cnt = sum(1 for it in items if int(it.get("is_in_stock", 1)) == 1 and not it.get("instant_soldout"))
+        soldout_cnt = len(items) - in_stock_cnt
+
+        stat_summary_html = f"发现 <strong style='color:#ff5722;'>{len(items)}</strong> 件新商品"
+        if in_stock_cnt > 0 and soldout_cnt > 0:
+            stat_summary_html += f" (<strong style='color:#10b981;'>{in_stock_cnt} 在库</strong> · <strong style='color:#ef4444;'>{soldout_cnt} 秒切已售</strong>)"
+        elif soldout_cnt > 0:
+            stat_summary_html += f" (<strong style='color:#ef4444;'>全部 {soldout_cnt} 件已秒切售罄</strong>)"
 
         html = f"""
         <!DOCTYPE html>
@@ -72,7 +96,7 @@ class EmailNotifier(BaseNotifier):
                         <span style="color:#ff5722;margin-right:8px;">★</span> Mandarake 【ドール】 上新通知
                     </h2>
                     <div style="font-size:13px;color:#94a3b8;margin-top:6px;">
-                        命中规则: <strong style="color:#f8fafc;">{rule_name or '默认规则'}</strong> | 发现 <strong style="color:#ff5722;">{len(items)}</strong> 件在库有货新商品
+                        命中规则: <strong style="color:#f8fafc;">{rule_name or '默认规则'}</strong> | {stat_summary_html}
                     </div>
                 </div>
                 <table style="width:100%;border-collapse:collapse;">
@@ -150,8 +174,17 @@ class EmailNotifier(BaseNotifier):
             return False
 
         try:
+            in_stock_cnt = sum(1 for it in items if int(it.get("is_in_stock", 1)) == 1 and not it.get("instant_soldout"))
+            soldout_cnt = len(items) - in_stock_cnt
+
+            if in_stock_cnt > 0 and soldout_cnt > 0:
+                subject_str = f"【Mandarake上新】{rule_name or '目标商品'} 在库 {in_stock_cnt} 件 / 秒切 {soldout_cnt} 件！"
+            elif in_stock_cnt > 0:
+                subject_str = f"【Mandarake上新】{rule_name or '目标商品'} 发现 {in_stock_cnt} 件新上架有货！"
+            else:
+                subject_str = f"【Mandarake秒切】{rule_name or '目标商品'} 发现 {soldout_cnt} 件上新已售罄商品！"
+
             msg = MIMEMultipart("alternative")
-            subject_str = f"【Mandarake上新】{rule_name or '目标商品'} 发现 {len(items)} 件新上架有货！"
             msg["Subject"] = Header(subject_str, "utf-8")
             msg["From"] = f"Mandarake Monitor <{self.smtp_user}>"
             msg["To"] = self.receiver_email

@@ -66,6 +66,9 @@ def main():
         except Exception:
             pass
 
+    # 尽早挂载终端日志拦截器，以捕获系统初始化全量日志
+    terminal_mgr.install()
+
     # 初始化通知中心与监控调度器
     notifier_mgr = NotificationManager(config)
     monitor = MandarakeMonitor(config, notifier_mgr)

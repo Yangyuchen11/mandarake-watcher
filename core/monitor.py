@@ -212,27 +212,56 @@ class MandarakeMonitor:
                 if max_price > 0 and price > max_price:
                     continue
 
-                # 若该关注商品在官网上已经售罄：立即同步本地数据库状态为售罄，并从已扫描缓存中移除以防止重复打印
+                is_new = int(item.get("is_new", 0))
+
+                # --- 状态与新发现判定 ---
                 if is_in_stock == 0:
+                    # 1. 之前已扫描并提醒过的商品，现在在官网上售罄了：同步数据库为售罄
                     if pid in self.seen_ids:
-                        self.seen_ids.discard(pid)
-                        self.db.upsert_products_batch([item])
                         self.db.mark_product_stock(pid, is_in_stock=0)
-                        logger.info(f"🏷️ [监控追踪] 规则 [{rule_name}] 设定的关注商品已售罄: {title} (ID: {pid})，已调整为售罄。")
+                        logger.info(f"🏷️ [监控追踪] 规则 [{rule_name}] 设定的关注商品已售罄: {title} (ID: {pid})")
+                        continue
+
+                    # 2. 从未见过的全新商品，但在系统检测前就已经售罄 (上新即秒切)
+                    notify_instant_soldout = rule.get("notify_instant_soldout", True)
+                    # 仅针对带有官网新着标志 (is_new == 1) 的商品触发秒切提醒，避免干扰陈年历史售罄商品
+                    if notify_instant_soldout and is_new == 1:
+                        self.seen_ids.add(pid)
+                        item_copy = dict(item)
+                        item_copy["instant_soldout"] = True
+                        rule_hits.append(item_copy)
+                        found_matches.append(item_copy)
+                        logger.info(f"⚡ [秒切提醒] 规则 [{rule_name}] 捕获新上架但已被买走的秒切商品: {title} (ID: {pid}, 售价: {price})！")
+                    else:
+                        # 普通陈年历史售罄商品 (is_new == 0)，直接收录到 seen_ids 防止后续重复处理
+                        self.seen_ids.add(pid)
                     continue
 
-                # 在库商品去重：已发现过的商品跳过上新提醒
+                # 在库商品 (is_in_stock == 1)
                 if pid in self.seen_ids:
+                    # 检查是否为“此前记录为售罄，如今补货/退订复活”的商品
+                    prev_rec = self.db.get_product(pid)
+                    if prev_rec and prev_rec.get("is_in_stock") == 0:
+                        self.db.mark_product_stock(pid, is_in_stock=1)
+                        item_copy = dict(item)
+                        item_copy["is_restock"] = True
+                        rule_hits.append(item_copy)
+                        found_matches.append(item_copy)
+                        logger.info(f"🔄 [补货复活] 规则 [{rule_name}] 发现此前售罄商品重新上架有货: {title} (ID: {pid})！")
                     continue
 
-                # 命中新上架在库目标
+                # 命中全新上架在库目标
                 self.seen_ids.add(pid)
-                rule_hits.append(item)
-                found_matches.append(item)
+                item_copy = dict(item)
+                item_copy["instant_soldout"] = False
+                rule_hits.append(item_copy)
+                found_matches.append(item_copy)
 
             if rule_hits:
                 self.total_matches += len(rule_hits)
-                logger.info(f"🎯 规则 [{rule_name}] 命中 {len(rule_hits)} 件新上架有货商品！")
+                in_stock_hits = [x for x in rule_hits if x.get("is_in_stock") == 1]
+                soldout_hits = [x for x in rule_hits if x.get("is_in_stock") == 0 or x.get("instant_soldout")]
+                logger.info(f"🎯 规则 [{rule_name}] 命中 {len(rule_hits)} 件新商品 (在库: {len(in_stock_hits)}, 秒切已售: {len(soldout_hits)})！")
                 
                 # 写入数据库归档
                 self.db.upsert_products_batch(rule_hits)

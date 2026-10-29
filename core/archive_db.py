@@ -204,13 +204,14 @@ class MandarakeArchiveDB:
                     shop = excluded.shop,
                     item_no = excluded.item_no,
                     category_code = CASE 
-                        WHEN products.category_code LIKE '%' || excluded.category_code || '%' THEN products.category_code
-                        WHEN products.category_code = '' OR length(excluded.category_code) > length(products.category_code) THEN excluded.category_code
-                        ELSE products.category_code || ',' || excluded.category_code 
+                        WHEN excluded.category_code != '' AND excluded.category_code != '020114' THEN excluded.category_code
+                        WHEN products.category_code != '' AND products.category_code != '020114' THEN products.category_code
+                        ELSE excluded.category_code
                     END,
                     category_name = CASE 
-                        WHEN length(excluded.category_code) >= length(products.category_code) THEN excluded.category_name 
-                        ELSE products.category_name 
+                        WHEN excluded.category_code != '' AND excluded.category_code != '020114' THEN excluded.category_name
+                        WHEN products.category_name != '' AND products.category_code != '020114' THEN products.category_name
+                        ELSE excluded.category_name
                     END,
                     is_in_stock = excluded.is_in_stock,
                     is_new = excluded.is_new,
@@ -225,7 +226,7 @@ class MandarakeArchiveDB:
             return 0, 0
 
     def get_category_counts(self) -> Dict[str, int]:
-        """快速聚合各层级分类下的商品数量快照 (包含多标签与前缀继承)"""
+        """快速聚合各层级分类下的商品数量快照 (支持层级前缀继承)"""
         from core.categories import category_mgr
         try:
             with self._get_connection() as conn:
@@ -235,7 +236,7 @@ class MandarakeArchiveDB:
             counts = {}
             for c in flat:
                 p = c["code"]
-                counts[p] = sum(cnt for code_str, cnt in rows if code_str and any(x.startswith(p) for x in code_str.split(",")))
+                counts[p] = sum(cnt for code_str, cnt in rows if code_str and code_str.startswith(p))
             return counts
         except Exception as e:
             logger.error(f"统计各分类商品数量异常: {e}")
@@ -243,16 +244,18 @@ class MandarakeArchiveDB:
 
     def reclassify_all_products(self) -> int:
         """
-        全量扫描现有商品数据库，利用分类管理器智能规则将未细分的二级分类重新归整为精确的三级分类
+        全量扫描现有商品数据库，优先从官网原始 URL 中提取最权威的官方 categoryCode，
+        并结合分类管理器核准全路径分类名称，彻底消除历史多分类与混杂污染。
         :return: 成功重新归类的商品数量
         """
+        from urllib.parse import urlparse, parse_qs
         from core.categories import category_mgr
 
         updated_count = 0
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT id, title, category_code FROM products")
+                cursor.execute("SELECT id, title, category_code, category_name, url FROM products")
                 rows = cursor.fetchall()
 
                 updates = []
@@ -260,9 +263,21 @@ class MandarakeArchiveDB:
                     pid = row["id"]
                     title = row["title"]
                     code = row["category_code"]
+                    url = row["url"]
 
-                    new_code, new_name = category_mgr.infer_category(title, code)
-                    if new_code != code:
+                    # 1. 优先从官网商品链接自身提取权威的 categoryCode
+                    official_code = ""
+                    if url:
+                        parsed = parse_qs(urlparse(url).query)
+                        cats = parsed.get("categoryCode", [])
+                        if cats and cats[0].strip():
+                            official_code = cats[0].strip()
+
+                    target_code = official_code if (official_code and category_mgr.is_valid_doll_code(official_code)) else code
+                    
+                    # 2. 规范化分类代码与名称（去除逗号混杂）
+                    new_code, new_name = category_mgr.infer_category(title, target_code)
+                    if new_code != code or new_name != row["category_name"]:
                         updates.append((new_code, new_name, pid))
 
                 if updates:
@@ -273,11 +288,25 @@ class MandarakeArchiveDB:
                     """, updates)
                     conn.commit()
                     updated_count = len(updates)
-                    logger.info(f"智能分类规整完成！已成功将 {updated_count} 件商品归入精确三级分类")
+                    logger.info(f"官网分类全面纠偏完成！已成功将 {updated_count} 件商品纠正为官方权威分类")
         except Exception as e:
-            logger.error(f"智能分类规整异常: {e}")
+            logger.error(f"官网分类规整异常: {e}")
 
         return updated_count
+
+    def get_product(self, item_id: str) -> Optional[Dict[str, Any]]:
+        """根据商品 ID 查询单条记录"""
+        if not item_id:
+            return None
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM products WHERE id = ?", (str(item_id).strip(),))
+                row = cursor.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"查询单个商品异常 ({item_id}): {e}")
+            return None
 
     def mark_product_stock(self, item_id: str, is_in_stock: int = 0) -> bool:
         """更新单个商品的在库/售罄状态 (0=售罄, 1=在库)"""
@@ -350,11 +379,11 @@ class MandarakeArchiveDB:
         where_clauses = ["1=1"]
         params: List[Any] = []
 
-        # 1. 分类匹配 (支持前缀匹配与多分类逗号分隔匹配)
+        # 1. 分类匹配 (纯净前缀层级匹配)
         if category_code and category_code.strip():
             c = category_code.strip()
-            where_clauses.append("(category_code LIKE ? OR category_code LIKE ?)")
-            params.extend([f"{c}%", f"%,{c}%"])
+            where_clauses.append("category_code LIKE ?")
+            params.append(f"{c}%")
 
         # 2. 在库/售罄筛选
         if is_in_stock is not None and is_in_stock in (0, 1):

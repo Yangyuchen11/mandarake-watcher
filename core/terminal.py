@@ -11,6 +11,16 @@ from collections import deque
 from typing import List, Dict, Optional, Callable, Any
 
 
+LEVEL_WEIGHTS = {
+    "DEBUG": 10,
+    "INFO": 20,
+    "WARNING": 30,
+    "WARN": 30,
+    "ERROR": 40,
+    "CRITICAL": 50,
+}
+
+
 class TerminalLogEntry:
     def __init__(self, entry_id: int, timestamp: float, level: str, logger_name: str, message: str, formatted: str):
         self.id = entry_id
@@ -89,7 +99,7 @@ class TerminalLogManager:
         root_logger.addHandler(handler)
         # 确保 werkzeug 日志仅在出错时记录与显示
         logging.getLogger("werkzeug").setLevel(logging.ERROR)
-        if root_logger.level == logging.NOTSET:
+        if root_logger.level == logging.NOTSET or root_logger.level > logging.INFO:
             root_logger.setLevel(logging.INFO)
         self._installed = True
         self.append_log("INFO", "mandarake.terminal", "Mandarake 终端日志拦截器已成功装载", "[SYS] Mandarake 日志监控就绪")
@@ -142,10 +152,10 @@ class TerminalLogManager:
         if since_id > 0:
             entries = [e for e in entries if e.id > since_id]
 
-        # 2. 等级筛选
+        # 2. 等级筛选 (支持 "INFO 及以上" 阶梯过滤)
         if level_filter and level_filter.upper() != "ALL":
-            target_level = level_filter.upper()
-            entries = [e for e in entries if e.level == target_level]
+            min_weight = LEVEL_WEIGHTS.get(level_filter.upper(), 20)
+            entries = [e for e in entries if LEVEL_WEIGHTS.get(e.level.upper(), 20) >= min_weight]
 
         # 3. 关键词检索
         if keyword and keyword.strip():

@@ -217,9 +217,13 @@ def create_app(
     @app.route("/api/check_now", methods=["POST"])
     @app.route("/api/monitor/check_now", methods=["POST"])
     def api_monitor_check_now():
+        logger.info("⚡ [手动触发] 收到立即检测请求，开始扫描最新上架商品...")
         matches = monitor.check_once()
         if matches:
             broadcast_sse_event({"type": "monitor_records_updated", "count": len(matches)})
+            logger.info(f"🎯 [手动触发] 检测完成，命中 {len(matches)} 件新商品！")
+        else:
+            logger.info("⚡ [手动触发] 检测完成，暂无新上架在库商品")
         return jsonify({"success": True, "matches_count": len(matches), "matches": matches})
 
     @app.route("/api/trigger_burst", methods=["POST"])
@@ -267,6 +271,9 @@ def create_app(
                 modified = True
             if "enabled" not in r:
                 r["enabled"] = True
+                modified = True
+            if "notify_instant_soldout" not in r:
+                r["notify_instant_soldout"] = True
                 modified = True
         return modified
 
