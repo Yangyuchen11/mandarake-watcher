@@ -216,25 +216,28 @@ class MandarakeMonitor:
 
                 # --- 状态与新发现判定 ---
                 if is_in_stock == 0:
-                    # 1. 之前已扫描并提醒过的商品，现在在官网上售罄了：同步数据库为售罄
-                    if pid in self.seen_ids:
+                    prev_rec = self.db.get_product(pid)
+                    # 1. 状态由在库(1)刚转为售罄(0)：此前在库记录有效，官网刚被买走切掉 (仅提醒1次)
+                    if prev_rec and prev_rec.get("is_in_stock") == 1:
                         self.db.mark_product_stock(pid, is_in_stock=0)
+                        self.seen_ids.add(pid)
                         logger.info(f"🏷️ [监控追踪] 规则 [{rule_name}] 设定的关注商品已售罄: {title} (ID: {pid})")
                         continue
 
                     # 2. 从未见过的全新商品，但在系统检测前就已经售罄 (上新即秒切)
                     notify_instant_soldout = rule.get("notify_instant_soldout", True)
                     # 仅针对带有官网新着标志 (is_new == 1) 的商品触发秒切提醒，避免干扰陈年历史售罄商品
-                    if notify_instant_soldout and is_new == 1:
+                    if pid not in self.seen_ids and notify_instant_soldout and is_new == 1:
                         self.seen_ids.add(pid)
                         item_copy = dict(item)
                         item_copy["instant_soldout"] = True
                         rule_hits.append(item_copy)
                         found_matches.append(item_copy)
                         logger.info(f"⚡ [秒切提醒] 规则 [{rule_name}] 捕获新上架但已被买走的秒切商品: {title} (ID: {pid}, 售价: {price})！")
-                    else:
-                        # 普通陈年历史售罄商品 (is_new == 0)，直接收录到 seen_ids 防止后续重复处理
-                        self.seen_ids.add(pid)
+                        continue
+
+                    # 3. 历史已售罄旧商品 (数据库中已是售罄或已非首次见到的售罄商品)：静默记录，杜绝每轮重复刷屏
+                    self.seen_ids.add(pid)
                     continue
 
                 # 在库商品 (is_in_stock == 1)
