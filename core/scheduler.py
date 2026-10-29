@@ -18,8 +18,11 @@ class MandarakeScheduler:
         self.monitor = monitor
         self.monitor.scheduler = self
         self.running = False
+        self.paused = False
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
+        self._resume_event = threading.Event()
+        self._interrupt_event = threading.Event()
         self.in_burst_mode = False
         self.burst_end_time = 0.0
 
@@ -33,7 +36,10 @@ class MandarakeScheduler:
         if self.running:
             return
         self.running = True
+        self.paused = False
         self._stop_event.clear()
+        self._resume_event.clear()
+        self._interrupt_event.clear()
         self._thread = threading.Thread(target=self._run_loop, daemon=True, name="MandarakeSchedulerThread")
         self._thread.start()
         logger.info("Mandarake 定时监控调度器已启动")
@@ -42,10 +48,31 @@ class MandarakeScheduler:
         if not self.running:
             return
         self.running = False
+        self.paused = False
         self._stop_event.set()
+        self._resume_event.set()
+        self._interrupt_event.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=3.0)
         logger.info("Mandarake 定时监控调度器已停止")
+
+    def pause(self) -> bool:
+        """暂停监控调度"""
+        if not self.running:
+            return False
+        self.paused = True
+        self._interrupt_event.set()
+        logger.info("⏸️ Mandarake 监控调度器已暂停")
+        return True
+
+    def resume(self) -> bool:
+        """恢复监控调度"""
+        if not self.running:
+            return False
+        self.paused = False
+        self._resume_event.set()
+        logger.info("▶️ Mandarake 监控调度器已恢复运行")
+        return True
 
     def trigger_burst(self, duration_minutes: Optional[int] = None):
         """手动触发爆发检测模式"""
@@ -170,6 +197,7 @@ class MandarakeScheduler:
         sched_cfg = self.monitor.config.get("schedule", {})
         return {
             "running": self.running,
+            "paused": self.paused,
             "in_burst_mode": self.in_burst_mode,
             "burst_remaining_seconds": burst_left,
             "burst_duration_minutes": sched_cfg.get("burst_duration_minutes", 3),
@@ -188,6 +216,12 @@ class MandarakeScheduler:
         logger.info("调度循环线程启动...")
         while not self._stop_event.is_set():
             try:
+                # 0. 检查是否处于暂停状态
+                if self.paused:
+                    self._resume_event.wait(timeout=0.5)
+                    self._resume_event.clear()
+                    continue
+
                 # 1. 检查是否触发每日凌晨 05:00 定点库存巡检
                 cur_dt = datetime.now()
                 today_str = cur_dt.strftime("%Y-%m-%d")
@@ -216,8 +250,10 @@ class MandarakeScheduler:
                     if not matches:
                         logger.info(f"⚡ [监控巡检] 第 {self.monitor.total_checks} 轮扫描完成，暂无新上架商品 (下次扫描在 {sleep_interval} 秒后)")
 
-                # 睡眠可中断
-                self._stop_event.wait(timeout=sleep_interval)
+                # 睡眠可被 pause()、stop() 立即中断
+                self._interrupt_event.clear()
+                self._interrupt_event.wait(timeout=sleep_interval)
+                self._interrupt_event.clear()
 
             except Exception as e:
                 logger.error(f"调度循环发生异常: {e}")

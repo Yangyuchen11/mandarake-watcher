@@ -233,6 +233,7 @@ def create_app(
         action = body.get("action")
         if action == "stop" or (action == "toggle" and scheduler.in_burst_mode):
             scheduler.stop_burst()
+            broadcast_sse_event({"type": "scheduler_status", "data": scheduler.get_status()})
             return jsonify({"success": True, "in_burst_mode": False, "message": "已停止高频爆发模式，恢复日常平缓监控"})
 
         sched_cfg = monitor.config.get("schedule", {})
@@ -243,13 +244,40 @@ def create_app(
             duration = max(1, int(duration))
         except (ValueError, TypeError):
             duration = 3
+        if scheduler.paused:
+            scheduler.resume()
         scheduler.trigger_burst(duration_minutes=duration)
+        broadcast_sse_event({"type": "scheduler_status", "data": scheduler.get_status()})
         return jsonify({"success": True, "in_burst_mode": True, "message": f"已启动 {duration} 分钟高频爆发检测模式"})
 
     @app.route("/api/monitor/stop_burst", methods=["POST"])
     def api_monitor_stop_burst():
         scheduler.stop_burst()
+        broadcast_sse_event({"type": "scheduler_status", "data": scheduler.get_status()})
         return jsonify({"success": True, "in_burst_mode": False, "message": "已停止高频爆发模式，恢复日常平缓监控"})
+
+    @app.route("/api/monitor/pause", methods=["POST"])
+    def api_monitor_pause():
+        scheduler.pause()
+        broadcast_sse_event({"type": "scheduler_status", "data": scheduler.get_status()})
+        return jsonify({"success": True, "paused": True, "message": "已暂停后台监控调度", "scheduler": scheduler.get_status()})
+
+    @app.route("/api/monitor/resume", methods=["POST"])
+    def api_monitor_resume():
+        scheduler.resume()
+        broadcast_sse_event({"type": "scheduler_status", "data": scheduler.get_status()})
+        return jsonify({"success": True, "paused": False, "message": "已恢复后台监控调度", "scheduler": scheduler.get_status()})
+
+    @app.route("/api/monitor/toggle_pause", methods=["POST"])
+    def api_monitor_toggle_pause():
+        if scheduler.paused:
+            scheduler.resume()
+            msg = "已恢复后台监控调度"
+        else:
+            scheduler.pause()
+            msg = "已暂停后台监控调度"
+        broadcast_sse_event({"type": "scheduler_status", "data": scheduler.get_status()})
+        return jsonify({"success": True, "paused": scheduler.paused, "message": msg, "scheduler": scheduler.get_status()})
 
     @app.route("/api/monitor/init_baseline", methods=["POST"])
     def api_monitor_init_baseline():
@@ -453,7 +481,7 @@ def create_app(
         stats = archive_db.get_monitor_record_stats()
         return jsonify({"success": True, "stats": stats})
 
-    @app.route("/api/monitor/records/<int:record_id>", methods=["DELETE"])
+    @app.route("/api/monitor/records/<int:record_id>", methods=["DELETE", "POST"])
     def api_delete_monitor_record(record_id: int):
         ok = archive_db.delete_monitor_record(record_id)
         return jsonify({"success": ok, "message": "记录已删除" if ok else "删除失败"})

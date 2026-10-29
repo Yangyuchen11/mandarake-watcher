@@ -693,6 +693,28 @@ function initEventListeners() {
         }
     });
 
+    document.getElementById("btn-monitor-pause")?.addEventListener("click", async () => {
+        const btn = document.getElementById("btn-monitor-pause");
+        if (btn) btn.disabled = true;
+        try {
+            const res = await fetch("/api/monitor/toggle_pause", { method: "POST" });
+            const data = await res.json();
+            if (data.success) {
+                showToast(data.message || (data.paused ? "已暂停后台监控调度" : "已恢复后台监控调度"), data.paused ? "warning" : "success");
+                if (data.scheduler) {
+                    updateSchedulerUI(data.scheduler);
+                }
+            } else {
+                showToast(data.message || "切换监控状态失败", "error");
+            }
+            loadStats();
+        } catch (err) {
+            showToast("操作失败: " + err, "error");
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    });
+
     // 23. 监控规则模态框
     const ruleModal = document.getElementById("rule-modal");
     document.getElementById("btn-open-add-rule")?.addEventListener("click", () => {
@@ -1207,6 +1229,8 @@ function initSSE() {
                 handleNewMonitorRecordsEvent(payload);
             } else if (payload.type === "monitor_records_cleared") {
                 handleRecordsClearedEvent();
+            } else if (payload.type === "scheduler_status") {
+                updateSchedulerUI(payload.data);
             }
         } catch (err) {
             // ignore heartbeat
@@ -1555,13 +1579,35 @@ function updateSchedulerUI(sched) {
     }
 
     const burstBtn = document.getElementById("btn-monitor-burst");
+    const pauseBtn = document.getElementById("btn-monitor-pause");
+
     if (sched.running) {
-        if (dot) dot.className = "status-indicator-dot";
-        if (title) {
-            title.textContent = sched.in_burst_mode 
-                ? `⚡ 高频爆发模式运行中 (每 ${sched.burst_interval_seconds || 2}s 扫描 | 剩余 ${sched.burst_remaining_seconds}s)`
-                : `监控调度器运行中 (每 ${sched.interval_seconds} 秒巡检一次)`;
+        if (sched.paused) {
+            if (dot) dot.className = "status-indicator-dot paused";
+            if (title) {
+                title.textContent = "监控调度器已暂停 (待命中)";
+            }
+            if (pauseBtn) {
+                pauseBtn.innerHTML = `<i class="fa-solid fa-play"></i> 恢复监控`;
+                pauseBtn.className = "btn btn-success btn-sm";
+                pauseBtn.title = "恢复后台自动监控巡检";
+                pauseBtn.disabled = false;
+            }
+        } else {
+            if (dot) dot.className = "status-indicator-dot";
+            if (title) {
+                title.textContent = sched.in_burst_mode 
+                    ? `⚡ 高频爆发模式运行中 (每 ${sched.burst_interval_seconds || 2}s 扫描 | 剩余 ${sched.burst_remaining_seconds}s)`
+                    : `监控调度器运行中 (每 ${sched.interval_seconds} 秒巡检一次)`;
+            }
+            if (pauseBtn) {
+                pauseBtn.innerHTML = `<i class="fa-solid fa-pause"></i> 暂停监控`;
+                pauseBtn.className = "btn btn-secondary btn-sm";
+                pauseBtn.title = "暂停后台自动监控巡检";
+                pauseBtn.disabled = false;
+            }
         }
+
         if (burstBtn) {
             if (sched.in_burst_mode) {
                 burstBtn.innerHTML = `<i class="fa-solid fa-stop"></i> 停止高频爆发 (${sched.burst_remaining_seconds}s)`;
@@ -1574,6 +1620,11 @@ function updateSchedulerUI(sched) {
     } else {
         if (dot) dot.className = "status-indicator-dot stopped";
         if (title) title.textContent = "监控调度器已停止";
+        if (pauseBtn) {
+            pauseBtn.innerHTML = `<i class="fa-solid fa-play"></i> 恢复监控`;
+            pauseBtn.className = "btn btn-secondary btn-sm";
+            pauseBtn.disabled = true;
+        }
         if (burstBtn) {
             burstBtn.innerHTML = `<i class="fa-solid fa-bolt"></i> 启动高频爆发`;
             burstBtn.className = "btn btn-warning btn-sm";
@@ -2043,6 +2094,39 @@ function initMonitorRecords() {
         mockMonitorRecords();
     });
 
+    // 9. 记录列表事件委托 (终极保障：防止任何单卡片事件绑定失效)
+    const listContainer = document.getElementById("monitor-records-list");
+    listContainer?.addEventListener("click", (e) => {
+        const delBtn = e.target.closest(".btn-del-record");
+        if (delBtn) {
+            e.stopPropagation();
+            const card = delBtn.closest(".record-card");
+            const recordId = card?.getAttribute("data-record-id");
+            if (recordId) {
+                deleteMonitorRecord(recordId, card);
+            }
+            return;
+        }
+
+        const copyBtn = e.target.closest(".btn-copy-url");
+        if (copyBtn) {
+            e.stopPropagation();
+            const card = copyBtn.closest(".record-card");
+            const itemUrl = card?.getAttribute("data-item-url");
+            if (itemUrl) copyTextToClipboard(itemUrl);
+            return;
+        }
+
+        const openBtn = e.target.closest(".btn-open-url");
+        if (openBtn) {
+            e.stopPropagation();
+            const card = openBtn.closest(".record-card");
+            const itemUrl = card?.getAttribute("data-item-url");
+            if (itemUrl) window.open(itemUrl, "_blank", "noopener,noreferrer");
+            return;
+        }
+    });
+
     // 初始读取统计信息
     loadRecordsStats();
 }
@@ -2176,10 +2260,11 @@ function createMonitorRecordCard(item) {
     const card = document.createElement("div");
     card.className = "record-card";
     card.setAttribute("data-record-id", item.id);
+    const itemUrl = item.url || `https://order.mandarake.co.jp/order/detailPage/item?itemCode=${item.item_id}`;
+    card.setAttribute("data-item-url", itemUrl);
 
     // 缩略图 fallback 与商品详情链接
     const imgUrl = item.img_url || "https://order.mandarake.co.jp/content/img/icon/shortcut/192.png";
-    const itemUrl = item.url || `https://order.mandarake.co.jp/order/detailPage/item?itemCode=${item.item_id}`;
     const priceText = item.price ? `${item.price.toLocaleString()}円` : "价格未标明";
     const shopText = item.shop || "まんだらけ";
     const ruleText = item.rule_name || "默认监控规则";
@@ -2322,33 +2407,42 @@ function renderRecordsPagination(total, page, pageSize, totalPages) {
 async function deleteMonitorRecord(recordId, cardEl) {
     if (!recordId) return;
 
+    if (cardEl && cardEl.getAttribute("data-deleting") === "true") return;
+    if (cardEl) cardEl.setAttribute("data-deleting", "true");
+
     try {
-        const resp = await fetch(`/api/monitor/records/${recordId}`, { method: "DELETE" });
+        const resp = await fetch(`/api/monitor/records/${recordId}`, { 
+            method: "DELETE",
+            headers: { "X-Requested-With": "XMLHttpRequest" }
+        });
         const data = await resp.json();
         if (data.success) {
-            showToast("已删除该条上新提醒记录", "info");
+            showToast("已删除该条上新记录", "info");
             if (cardEl) {
-                cardEl.style.transition = "all 0.3s ease";
+                cardEl.style.transition = "all 0.28s cubic-bezier(0.4, 0, 0.2, 1)";
                 cardEl.style.opacity = "0";
-                cardEl.style.transform = "translateX(30px)";
+                cardEl.style.transform = "translateX(35px)";
                 setTimeout(() => {
                     cardEl.remove();
-                    // 若当前卡片为本页最后一条，重新加载当前页或上一页
                     const remaining = document.querySelectorAll(".record-card").length;
                     if (remaining === 0) {
                         const targetPage = Math.max(1, state.records.page - 1);
                         loadMonitorRecords(targetPage);
+                    } else {
+                        loadMonitorRecords(state.records.page);
                     }
                     loadRecordsStats();
-                }, 300);
+                }, 280);
             } else {
                 loadMonitorRecords(state.records.page);
                 loadRecordsStats();
             }
         } else {
+            if (cardEl) cardEl.removeAttribute("data-deleting");
             showToast(data.message || "删除失败", "error");
         }
     } catch (err) {
+        if (cardEl) cardEl.removeAttribute("data-deleting");
         showToast(`删除异常: ${err}`, "error");
     }
 }
@@ -2516,3 +2610,67 @@ function checkMonitorNow() {
 window.checkMonitorNow = checkMonitorNow;
 window.mockMonitorRecords = mockMonitorRecords;
 window.loadMonitorRecords = loadMonitorRecords;
+
+/**
+ * 全局浮层 Toast 提示组件
+ * @param {string} message 提示文本
+ * @param {'info'|'success'|'warning'|'error'} type 提示类型
+ * @param {number} duration 显示时长 (ms)
+ */
+function showToast(message, type = "info", duration = 3000) {
+    if (!message) return;
+    try {
+        let container = document.getElementById("global-toast-container");
+        if (!container) {
+            container = document.createElement("div");
+            container.id = "global-toast-container";
+            container.className = "toast-container";
+            document.body.appendChild(container);
+        }
+
+        const toast = document.createElement("div");
+        toast.className = `toast-item ${type}`;
+
+        const iconMap = {
+            success: "fa-solid fa-circle-check",
+            error: "fa-solid fa-circle-xmark",
+            warning: "fa-solid fa-triangle-exclamation",
+            info: "fa-solid fa-circle-info"
+        };
+        const iconClass = iconMap[type] || iconMap.info;
+
+        toast.innerHTML = `
+            <i class="toast-icon ${iconClass}"></i>
+            <span class="toast-msg">${escapeHtml(String(message))}</span>
+            <button class="toast-close" title="关闭"><i class="fa-solid fa-xmark"></i></button>
+        `;
+
+        container.appendChild(toast);
+
+        requestAnimationFrame(() => {
+            toast.classList.add("show");
+        });
+
+        let timer = null;
+        const removeToast = () => {
+            if (timer) clearTimeout(timer);
+            toast.classList.remove("show");
+            toast.classList.add("hide");
+            setTimeout(() => {
+                toast.remove();
+                if (container.children.length === 0) {
+                    container.remove();
+                }
+            }, 300);
+        };
+
+        toast.querySelector(".toast-close")?.addEventListener("click", removeToast);
+        if (duration > 0) {
+            timer = setTimeout(removeToast, duration);
+        }
+    } catch (e) {
+        console.log(`[Toast ${type}]`, message);
+    }
+}
+
+window.showToast = showToast;
