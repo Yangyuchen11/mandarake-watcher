@@ -17,6 +17,8 @@ from bs4 import BeautifulSoup
 from core.categories import category_mgr, ROOT_DOLL_CODE
 
 logger = logging.getLogger("mandarake.scraper")
+# 抑制 urllib3 自动重试时的非致命警告日志，避免终端与日志被 RemoteDisconnected 重试刷屏
+logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
 
 BASE_ORDER_URL = "https://order.mandarake.co.jp/order"
 BASE_SITE_URL = "https://www.mandarake.co.jp/"
@@ -240,11 +242,14 @@ class MandarakeScraper:
                 itemno_el = block.select_one("div.basic p.itemno, .itemno")
                 item_no = itemno_el.get_text(strip=True) if itemno_el else ""
 
-                # 8. 在库状态检验 (双重保障)
+                # 8. 在库状态检验 (多重互斥严谨判定：必须有加入购物车按钮且无缺货标志)
                 stock_el = block.select_one("div.basic p.stock, .stock")
                 stock_text = stock_el.get_text(strip=True) if stock_el else ""
+                has_soldout_mark = bool(block.select_one(".soldout, .sold_out, .sold, .addalert"))
+                has_cart_btn = bool(block.select_one(".addcart, .cart_btn, a[class*='addbasket'], div.addcart a"))
                 is_soldout = (
-                    bool(block.select_one(".soldout, .sold_out, .sold"))
+                    has_soldout_mark
+                    or not has_cart_btn
                     or "売り切れ" in stock_text
                     or "在庫なし" in stock_text
                     or "品切" in stock_text
@@ -340,3 +345,27 @@ class MandarakeScraper:
             "description": desc,
             "url": url,
         }
+
+    def check_item_realtime_stock(self, item_id: str) -> Optional[int]:
+        """
+        通过 Mandarake 官方核心内部 API 实时精准校验单品在库状态
+        :param item_id: 商品 ID (itemCode)
+        :return: 1 (在库有货), 0 (售罄缺货), None (接口异常/网络超时)
+        """
+        url = "https://my.mandarake.co.jp/ItemDetailInfo/getInfo/"
+        headers = {
+            "User-Agent": DEFAULT_USER_AGENT,
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            "Referer": f"{DETAIL_ENDPOINT}?itemCode={item_id}&lang=ja",
+            "Origin": "https://order.mandarake.co.jp"
+        }
+        try:
+            resp = self.session.post(url, data={"idx": str(item_id).strip(), "lang": "ja"}, headers=headers, timeout=8)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("status") == "ok" and "zaiko" in data:
+                    return int(data["zaiko"])
+                logger.warning(f"实时库存校验返回非预期响应 (ID: {item_id}): {resp.text}")
+        except Exception as e:
+            logger.warning(f"实时库存校验请求异常 (ID: {item_id}): {e}")
+        return None

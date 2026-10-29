@@ -35,6 +35,11 @@ class MandarakeMonitor:
         # 上新记录监听器列表
         self._record_listeners = []
 
+        # 复活通知冷却追踪: {item_id: last_notified_timestamp}
+        self.restock_notify_times: Dict[str, float] = {}
+        # 复活防抖冷却时间 (默认 1800 秒 = 30 分钟)
+        self.restock_cooldown_seconds = int(self.config.get("schedule", {}).get("restock_cooldown_seconds", 1800))
+
         # 统计计数
         self.last_check_time: float = 0.0
         self.total_checks: int = 0
@@ -245,7 +250,28 @@ class MandarakeMonitor:
                     # 检查是否为“此前记录为售罄，如今补货/退订复活”的商品
                     prev_rec = self.db.get_product(pid)
                     if prev_rec and prev_rec.get("is_in_stock") == 0:
+                        # 核心校验 1: 官方实时库存核心 API 二次 Double-Check，过滤列表页缓存抖动
+                        real_stock = self.scraper.check_item_realtime_stock(pid)
+                        if real_stock == 0:
+                            # 官方核心接口确认为售罄，属列表页缓存延迟/抖动，维持售罄并忽略
+                            logger.debug(f"[Monitor] 商品 {title} (ID: {pid}) 列表页疑似复活但官方实时接口确认为售罄，已过滤虚假抖动")
+                            continue
+                        elif real_stock == 1:
+                            logger.info(f"✅ [复活二次校验通过] 商品 {title} (ID: {pid}) 官方实时接口确认为在库有货！")
+
+                        now_time = time.time()
+                        last_restock_time = self.restock_notify_times.get(pid, 0.0)
                         self.db.mark_product_stock(pid, is_in_stock=1)
+
+                        # 核心校验 2: 复活提醒防抖冷却机制 (默认 30 分钟内不重复发信轰炸)
+                        if (now_time - last_restock_time) < self.restock_cooldown_seconds:
+                            logger.info(
+                                f"🔄 [补货复活-冷却中] 规则 [{rule_name}] 商品 {title} (ID: {pid}) 处于防抖冷却期内 "
+                                f"({int(now_time - last_restock_time)}s < {self.restock_cooldown_seconds}s)，已静默更新在库状态"
+                            )
+                            continue
+
+                        self.restock_notify_times[pid] = now_time
                         item_copy = dict(item)
                         item_copy["is_restock"] = True
                         rule_hits.append(item_copy)
