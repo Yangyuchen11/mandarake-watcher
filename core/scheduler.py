@@ -65,7 +65,7 @@ class MandarakeScheduler:
     def run_daily_stock_sync(self) -> Dict[str, Any]:
         """
         每日凌晨 05:00 全量库存巡检任务 (亦支持手动即时触发)
-        扫描各分类包含售罄的全量最新数据，若发现商品已售罄则自动更新为售罄状态 (is_in_stock = 0)
+        全量遍历扫描各分类包含售罄的所有分页数据，若发现商品已售罄则自动更新为售罄状态 (is_in_stock = 0)
         """
         with self._sync_lock:
             if self.is_syncing_daily:
@@ -73,29 +73,43 @@ class MandarakeScheduler:
             self.is_syncing_daily = True
 
         from core.categories import category_mgr
+        from core.scraper import MandarakeScraper
+
         target_codes = category_mgr.get_leaf_category_codes()
-        logger.info(f"⏰ [05:00 库存巡检] 开始深度扫描 {len(target_codes)} 个细分分类最新库存与售罄状态...")
+        logger.info(f"⏰ [05:00 全量库存巡检] 开始深度全量扫描 {len(target_codes)} 个细分分类的所有分页数据...")
         start_ts = time.time()
         total_scanned = 0
         sold_out_found = 0
+        sync_scraper = MandarakeScraper()
 
         try:
-            for cat_code in target_codes:
+            for idx, cat_code in enumerate(target_codes, 1):
                 if self._stop_event.is_set():
                     break
 
-                # 抓取该分类前 2 页全量商品 (包含售罄, dispCount=240, 单类最多覆盖 480 件)
-                for page in range(1, 3):
-                    items, has_next, count = self.monitor.scraper.fetch_category_page(
-                        category_code=cat_code,
-                        page=page,
-                        in_stock_only=False,  # 抓取包含已售罄的全部商品
-                        disp_count=240
-                    )
-                    if not items:
+                cat_name = category_mgr.get_category_name(cat_code)
+                cat_items_count = 0
+                cat_sold_out_count = 0
+                page = 1
+
+                while not self._stop_event.is_set():
+                    try:
+                        items, has_next, count = sync_scraper.fetch_category_page(
+                            category_code=cat_code,
+                            page=page,
+                            in_stock_only=False,  # 抓取包含已售罄的全部商品
+                            disp_count=240
+                        )
+                    except Exception as e:
+                        logger.error(f"⏰ [05:00 巡检] 分类 {cat_name} 第 {page} 页抓取异常: {e}")
+                        break
+
+                    if not items and count == 0:
                         break
 
                     total_scanned += len(items)
+                    cat_items_count += len(items)
+
                     # 批量更新入库
                     self.monitor.db.upsert_products_batch(items)
 
@@ -104,12 +118,34 @@ class MandarakeScheduler:
                     if sold_ids:
                         self.monitor.db.mark_products_stock_batch(sold_ids, is_in_stock=0)
                         sold_out_found += len(sold_ids)
+                        cat_sold_out_count += len(sold_ids)
+
+                    logger.debug(
+                        f"⏰ [05:00 巡检] [{idx}/{len(target_codes)}] {cat_name} 第 {page} 页: 本页 {len(items)} 件 (售罄 {len(sold_ids)})"
+                    )
 
                     if not has_next:
                         break
 
+                    page += 1
+
+                # 记录分类抓取进度归档
+                cat_in_stock_count = cat_items_count - cat_sold_out_count
+                self.monitor.db.update_crawl_progress(
+                    category_code=cat_code,
+                    category_name=cat_name,
+                    total_items=cat_items_count,
+                    in_stock_items=cat_in_stock_count,
+                    last_page=page,
+                    status="COMPLETED" if not self._stop_event.is_set() else "STOPPED"
+                )
+
+                logger.info(
+                    f"⏰ [05:00 巡检] [{idx}/{len(target_codes)}] {cat_name} 巡检完毕，共 {page} 页，扫描 {cat_items_count} 件 (确认售罄 {cat_sold_out_count} 件)"
+                )
+
             duration = round(time.time() - start_ts, 1)
-            summary = f"每日库存巡检完成！累计扫描 {total_scanned} 件，同步确认售罄 {sold_out_found} 件，耗时 {duration}s"
+            summary = f"每日全量库存巡检完成！累计扫描 {total_scanned} 件，同步确认售罄 {sold_out_found} 件，耗时 {duration}s"
             self.last_daily_sync_summary = summary
             logger.info(f"✅ {summary}")
             return {
@@ -120,7 +156,7 @@ class MandarakeScheduler:
                 "message": summary
             }
         except Exception as e:
-            err = f"每日库存巡检异常: {e}"
+            err = f"每日全量库存巡检异常: {e}"
             logger.error(err)
             self.last_daily_sync_summary = err
             return {"success": False, "error": err}
