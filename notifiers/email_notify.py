@@ -34,47 +34,71 @@ class EmailNotifier(BaseNotifier):
         self.use_ssl = use_ssl
 
     def _build_html(self, items: List[Dict[str, Any]], rule_name: str) -> str:
-        """构建现代响应式 HTML 邮件内容"""
-        rows = []
+        """构建现代响应式 HTML 邮件内容 (移动端 & 桌面端双端完美适配)"""
+        cards = []
         for it in items[:20]:
             img_src = it.get("img_url") or "https://order.mandarake.co.jp/content/img/icon/shortcut/192.png"
-            img_tag = f'<img src="{img_src}" width="110" height="90" style="border-radius:6px;object-fit:cover;display:block;" />'
             price_val = it.get("price_str") or f"{int(it.get('price') or 0):,}円"
             shop = it.get("shop") or "まんだらけ"
             cat = it.get("category_name") or "ドール"
             url = it.get("url") or f"https://order.mandarake.co.jp/order/detailPage/item?itemCode={it.get('id')}&lang=ja"
+            item_id = it.get("item_no") or it.get("id")
+            title = it.get("title") or "未知商品"
             is_soldout = it.get("instant_soldout") or (int(it.get("is_in_stock", 1)) == 0)
             is_restock = bool(it.get("is_restock"))
 
             if is_soldout:
-                status_tag = '<span style="display:inline-block;padding:2px 8px;background:#ef4444;color:#fff;border-radius:4px;font-size:11px;font-weight:bold;margin-left:6px;">⚡ 秒切已售罄</span>'
-                btn_style = "background:#475569;color:#e2e8f0;"
+                status_tag = '<span style="display:inline-block;padding:2px 6px;background:#ef4444;color:#ffffff;border-radius:4px;font-size:10px;font-weight:bold;margin-left:4px;vertical-align:middle;">⚡ 秒切已售罄</span>'
+                btn_style = "background:#475569;color:#e2e8f0;border:1px solid #64748b"
                 btn_text = "查看详情"
             elif is_restock:
-                status_tag = '<span style="display:inline-block;padding:2px 8px;background:#3b82f6;color:#fff;border-radius:4px;font-size:11px;font-weight:bold;margin-left:6px;">🔄 补货在库</span>'
-                btn_style = "background:#3b82f6;color:#ffffff;"
+                status_tag = '<span style="display:inline-block;padding:2px 6px;background:#2563eb;color:#ffffff;border-radius:4px;font-size:10px;font-weight:bold;margin-left:4px;vertical-align:middle;">🔄 补货在库</span>'
+                btn_style = "background:#2563eb;color:#ffffff"
                 btn_text = "官网抢购"
             else:
-                status_tag = '<span style="display:inline-block;padding:2px 8px;background:#10b981;color:#fff;border-radius:4px;font-size:11px;font-weight:bold;margin-left:6px;">🟢 在库有货</span>'
-                btn_style = "background:#ff5722;color:#ffffff;"
+                status_tag = '<span style="display:inline-block;padding:2px 6px;background:#059669;color:#ffffff;border-radius:4px;font-size:10px;font-weight:bold;margin-left:4px;vertical-align:middle;">🟢 在库有货</span>'
+                btn_style = "background:#ff5722;color:#ffffff"
                 btn_text = "官网抢购"
 
-            rows.append(f"""
-            <tr style="border-bottom:1px solid #2d3748;">
-                <td style="padding:12px;text-align:center;width:120px;">{img_tag}</td>
-                <td style="padding:12px;">
-                    <div style="font-size:11px;color:#9ca3af;margin-bottom:4px;">{cat} · 发送店: {shop} {status_tag}</div>
-                    <div style="font-size:14px;font-weight:bold;color:#f3f4f6;line-height:1.4;margin-bottom:6px;">{it.get('title')}</div>
-                    <div style="font-size:12px;color:#9ca3af;">编号/ID: {it.get('item_no') or it.get('id')}</div>
-                </td>
-                <td style="padding:12px;font-size:16px;font-weight:bold;color:#ff5722;white-space:nowrap;text-align:right;">{price_val}</td>
-                <td style="padding:12px;text-align:center;white-space:nowrap;width:100px;">
-                    <a href="{url}" style="display:inline-block;padding:8px 16px;{btn_style};text-decoration:none;border-radius:6px;font-size:12px;font-weight:bold;">{btn_text}</a>
-                </td>
-            </tr>
+            # 采用 2 列表格/卡片布局：左侧商品图，右侧信息 + 价格与直达按钮
+            # 杜绝多列表格在手机小屏幕下被挤爆、右侧价格与按钮出界无法点击的问题
+            cards.append(f"""
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border-bottom:1px solid #334155;background:#1e293b;">
+                <tr>
+                    <td valign="top" class="item-img-cell" style="padding:12px 0 12px 12px;width:96px;min-width:90px;max-width:104px;text-align:center;">
+                        <a href="{url}" target="_blank" style="text-decoration:none;display:inline-block;">
+                            <img src="{img_src}" class="item-img" width="90" height="90" style="width:90px;height:90px;border-radius:8px;object-fit:cover;display:block;border:1px solid #475569;" alt="商品图" />
+                        </a>
+                    </td>
+                    <td valign="top" class="item-info-cell" style="padding:12px 14px 12px 12px;">
+                        <div style="font-size:11px;color:#94a3b8;line-height:1.4;margin-bottom:4px;">
+                            <span>{cat}</span> · <span>发送店: {shop}</span>{status_tag}
+                        </div>
+                        <div style="margin-bottom:8px;">
+                            <a href="{url}" target="_blank" style="font-size:14px;font-weight:600;color:#f8fafc;text-decoration:none;line-height:1.4;display:block;">
+                                {title}
+                            </a>
+                        </div>
+                        <!-- 底部价格与按钮行：全宽自适应，手机端也能一览无余 -->
+                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:6px;">
+                            <tr>
+                                <td valign="middle" align="left">
+                                    <div class="price-val" style="font-size:16px;font-weight:bold;color:#ff5722;line-height:1.2;">{price_val}</div>
+                                    <div style="font-size:11px;color:#64748b;margin-top:2px;">ID: {item_id}</div>
+                                </td>
+                                <td valign="middle" align="right" style="white-space:nowrap;padding-left:8px;">
+                                    <a href="{url}" target="_blank" class="action-btn" style="display:inline-block;padding:8px 16px;{btn_style};text-decoration:none;border-radius:6px;font-size:12px;font-weight:bold;text-align:center;box-shadow:0 2px 4px rgba(0,0,0,0.25);">
+                                        {btn_text} →
+                                    </a>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
             """)
 
-        rows_html = "".join(rows)
+        cards_html = "".join(cards)
 
         in_stock_cnt = sum(1 for it in items if int(it.get("is_in_stock", 1)) == 1 and not it.get("instant_soldout"))
         soldout_cnt = len(items) - in_stock_cnt
@@ -85,35 +109,63 @@ class EmailNotifier(BaseNotifier):
         elif soldout_cnt > 0:
             stat_summary_html += f" (<strong style='color:#ef4444;'>全部 {soldout_cnt} 件已秒切售罄</strong>)"
 
+        more_notice_html = ""
+        if len(items) > 20:
+            more_notice_html = f"""
+            <div style="padding:12px;text-align:center;color:#94a3b8;font-size:12px;background:#1e293b;border-bottom:1px solid #334155;">
+                ⚡ 本次共捕获 <strong>{len(items)}</strong> 件商品，为保证邮件加载与排版流畅，以上仅展示前 20 件。更多商品请前往控制台或 Mandarake 官网查看。
+            </div>
+            """
+
         html = f"""
         <!DOCTYPE html>
-        <html>
-        <head><meta charset="utf-8"></head>
-        <body style="margin:0;padding:20px;background-color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;">
-            <div style="max-width:760px;margin:0 auto;background:#1e293b;border-radius:12px;overflow:hidden;border:1px solid #334155;">
-                <div style="background:linear-gradient(135deg, #1e1e2f 0%, #0f172a 100%);color:#fff;padding:24px 28px;border-bottom:2px solid #ff5722;">
-                    <h2 style="margin:0;font-size:20px;display:flex;align-items:center;color:#fff;">
-                        <span style="color:#ff5722;margin-right:8px;">★</span> Mandarake 【ドール】 上新通知
-                    </h2>
-                    <div style="font-size:13px;color:#94a3b8;margin-top:6px;">
-                        命中规则: <strong style="color:#f8fafc;">{rule_name or '默认规则'}</strong> | {stat_summary_html}
+        <html lang="zh-CN">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+            <meta http-equiv="X-UA-Compatible" content="IE=edge">
+            <title>Mandarake 上新通知</title>
+            <style type="text/css">
+                body, table, td, a {{ -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }}
+                table, td {{ mso-table-lspace: 0pt; mso-table-rspace: 0pt; }}
+                img {{ -ms-interpolation-mode: bicubic; }}
+                body {{ margin: 0; padding: 0; width: 100% !important; min-width: 100%; }}
+                @media only screen and (max-width: 480px) {{
+                    .email-wrapper {{ padding: 6px 4px !important; }}
+                    .email-container {{ border-radius: 8px !important; width: 100% !important; }}
+                    .header-box {{ padding: 16px 14px !important; }}
+                    .header-title {{ font-size: 17px !important; }}
+                    .item-img {{ width: 80px !important; height: 80px !important; }}
+                    .item-img-cell {{ width: 84px !important; min-width: 84px !important; padding: 10px 0 10px 8px !important; }}
+                    .item-info-cell {{ padding: 10px 10px 10px 8px !important; }}
+                    .price-val {{ font-size: 15px !important; }}
+                    .action-btn {{ padding: 7px 12px !important; font-size: 11px !important; }}
+                }}
+            </style>
+        </head>
+        <body style="margin:0;padding:0;background-color:#0b1120;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+            <div class="email-wrapper" style="padding:20px 10px;background-color:#0b1120;">
+                <div class="email-container" style="max-width:680px;margin:0 auto;background:#1e293b;border-radius:12px;overflow:hidden;border:1px solid #334155;box-shadow:0 8px 24px rgba(0,0,0,0.35);">
+                    <!-- 头部标题栏 -->
+                    <div class="header-box" style="background:linear-gradient(135deg, #1e1e2f 0%, #0f172a 100%);color:#fff;padding:20px 24px;border-bottom:2px solid #ff5722;">
+                        <h2 class="header-title" style="margin:0;font-size:19px;display:flex;align-items:center;color:#ffffff;line-height:1.3;">
+                            <span style="color:#ff5722;margin-right:8px;font-size:20px;">★</span> Mandarake 【ドール】 上新通知
+                        </h2>
+                        <div style="font-size:13px;color:#94a3b8;margin-top:6px;line-height:1.4;">
+                            命中规则: <strong style="color:#f8fafc;">{rule_name or '默认规则'}</strong> | {stat_summary_html}
+                        </div>
                     </div>
-                </div>
-                <table style="width:100%;border-collapse:collapse;">
-                    <thead>
-                        <tr style="background:#0f172a;color:#94a3b8;font-size:12px;border-bottom:1px solid #334155;">
-                            <th style="padding:10px;text-align:center;">商品图</th>
-                            <th style="padding:10px;text-align:left;">商品详情</th>
-                            <th style="padding:10px;text-align:right;">售价</th>
-                            <th style="padding:10px;text-align:center;">操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {rows_html}
-                    </tbody>
-                </table>
-                <div style="padding:16px 24px;background:#0f172a;color:#64748b;font-size:11px;text-align:center;border-top:1px solid #334155;">
-                    此邮件由 Mandarake 【ドール】 智能监控机器人自动发送 · 定点监控与高速发现
+
+                    <!-- 商品卡片列表 (2 列流式布局) -->
+                    <div style="width:100%;">
+                        {cards_html}
+                        {more_notice_html}
+                    </div>
+
+                    <!-- 底部说明栏 -->
+                    <div style="padding:16px 20px;background:#0f172a;color:#64748b;font-size:11px;text-align:center;line-height:1.5;">
+                        此邮件由 Mandarake 【ドール】 智能监控机器人自动发送 · 定点监控与高速发现
+                    </div>
                 </div>
             </div>
         </body>
