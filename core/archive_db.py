@@ -27,15 +27,16 @@ class MandarakeArchiveDB:
     def _get_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        # 启用 WAL 模式大幅提升读写并发性能与稳定性
-        conn.execute("PRAGMA journal_mode = WAL;")
         conn.execute("PRAGMA synchronous = NORMAL;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
         return conn
 
     def init_db(self):
         """初始化数据表与索引结构"""
         try:
             with self._get_connection() as conn:
+                # 启用 WAL 模式持久化保存在数据库头中，无需每次建连重复切换
+                conn.execute("PRAGMA journal_mode = WAL;")
                 # 1. 商品表
                 conn.execute("""
                 CREATE TABLE IF NOT EXISTS products (
@@ -307,6 +308,30 @@ class MandarakeArchiveDB:
         except Exception as e:
             logger.error(f"查询单个商品异常 ({item_id}): {e}")
             return None
+
+    def get_products_stock_map(self, item_ids: List[str]) -> Dict[str, int]:
+        """批量查询指定商品 ID 集合的在库状态映射 {id: is_in_stock}"""
+        clean_ids = list(dict.fromkeys(str(x).strip() for x in item_ids if str(x).strip()))
+        if not clean_ids:
+            return {}
+        result: Dict[str, int] = {}
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                chunk_size = 500
+                for start in range(0, len(clean_ids), chunk_size):
+                    chunk = clean_ids[start:start + chunk_size]
+                    placeholders = ",".join(["?"] * len(chunk))
+                    cursor.execute(
+                        f"SELECT id, is_in_stock FROM products WHERE id IN ({placeholders})",
+                        chunk
+                    )
+                    for row in cursor.fetchall():
+                        result[str(row["id"])] = int(row["is_in_stock"])
+        except Exception as e:
+            logger.error(f"批量查询商品在库状态异常: {e}")
+            return {}
+        return result
 
     def mark_product_stock(self, item_id: str, is_in_stock: int = 0) -> bool:
         """更新单个商品的在库/售罄状态 (0=售罄, 1=在库)"""

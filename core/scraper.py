@@ -18,9 +18,23 @@ from bs4 import BeautifulSoup
 
 try:
     import lxml  # noqa: F401
+    from lxml import html as lxml_html, etree as lxml_etree
     BS_PARSER = "lxml"
+    _XP_BLOCKS = lxml_etree.XPath(
+        "//div[contains(concat(' ', normalize-space(@class), ' '), ' thumlarge ')]//div[contains(concat(' ', normalize-space(@class), ' '), ' block ')]"
+        " | //*[contains(concat(' ', normalize-space(@class), ' '), ' thumlist ')]//div[contains(concat(' ', normalize-space(@class), ' '), ' block ')]"
+        " | //div[contains(concat(' ', normalize-space(@class), ' '), ' block ') and @data-itemidx]"
+    )
+    _XP_NEXT_PAGE = lxml_etree.XPath(
+        "//div[contains(concat(' ', normalize-space(@class), ' '), ' pager ')]"
+        "//div[contains(concat(' ', normalize-space(@class), ' '), ' next ')]//a[@href]"
+    )
 except ImportError:
+    lxml_html = None
+    lxml_etree = None
     BS_PARSER = "html.parser"
+    _XP_BLOCKS = None
+    _XP_NEXT_PAGE = None
 
 from core.categories import category_mgr, ROOT_DOLL_CODE
 
@@ -355,120 +369,274 @@ class MandarakeScraper:
         )
         return res["items"], res["has_next"], res["count"]
 
+    @staticmethod
+    def _lxml_text_strip(el) -> str:
+        """等价于 BeautifulSoup.get_text(strip=True) 的高速文本提取"""
+        if el is None:
+            return ""
+        return "".join(part.strip() for part in el.itertext() if part.strip())
+
+    @staticmethod
+    def _has_div_ancestor_with_class(el, stop_el, target_classes: Tuple[str, ...]) -> bool:
+        """检查在 stop_el 之下是否存在带指定 class 的 div 祖先节点"""
+        parent = el.getparent()
+        while parent is not None and parent is not stop_el:
+            if parent.tag == "div":
+                p_cls = parent.get("class")
+                if p_cls:
+                    p_classes = p_cls.split()
+                    for tc in target_classes:
+                        if tc in p_classes:
+                            return True
+            parent = parent.getparent()
+        return False
+
+    @staticmethod
+    def _build_parsed_item(
+        item_id: Optional[str],
+        item_href: str,
+        title: str,
+        price_str: str,
+        img_url: str,
+        shop: str,
+        item_no: str,
+        stock_text: str,
+        has_soldout_mark: bool,
+        has_cart_btn: bool,
+        is_new: int,
+        current_cat_code: str,
+        now_ts: int,
+    ) -> Optional[Dict[str, Any]]:
+        """规范化提取字段并构建统一的商品字典"""
+        if not item_id and item_href:
+            parsed_qs = parse_qs(urlparse(item_href).query)
+            if "itemCode" in parsed_qs:
+                item_id = parsed_qs["itemCode"][0]
+
+        if not item_id:
+            return None
+
+        item_id = str(item_id).strip()
+
+        # 提取纯数字价格 (优先税前基本价，如 2,500円)
+        price_val = 0
+        if price_str:
+            clean_p = price_str.replace(",", "")
+            match = re.search(r"(\d+)\s*円", clean_p)
+            if match:
+                price_val = int(match.group(1))
+
+        # 商品详情直达链接（剔除任何防缓存临时查询参数 _）
+        full_url = urljoin(BASE_ORDER_URL, item_href) if item_href else f"{DETAIL_ENDPOINT}?itemCode={item_id}&lang=ja"
+        if "_=" in full_url:
+            parsed_u = urlparse(full_url)
+            filtered_qs = [(k, v) for k, v in parse_qsl(parsed_u.query, keep_blank_values=True) if k != "_"]
+            full_url = urlunparse(parsed_u._replace(query=urlencode(filtered_qs)))
+
+        if img_url and not img_url.startswith("http"):
+            img_url = urljoin(BASE_ORDER_URL, img_url)
+
+        # 在库状态检验 (多重互斥严谨判定：必须有加入购物车按钮且无缺货标志)
+        is_soldout = (
+            has_soldout_mark
+            or not has_cart_btn
+            or "売り切れ" in stock_text
+            or "在庫なし" in stock_text
+            or "品切" in stock_text
+        )
+        is_in_stock = 0 if is_soldout else 1
+
+        # 优先提取官网链接中的原始官方分类代码，保证100%忠于官网
+        official_cat = ""
+        if item_href:
+            parsed_qs = parse_qs(urlparse(item_href).query)
+            if "categoryCode" in parsed_qs and parsed_qs["categoryCode"]:
+                official_cat = parsed_qs["categoryCode"][0].strip()
+
+        cat_code_to_use = official_cat if (official_cat and category_mgr.is_valid_doll_code(official_cat)) else (current_cat_code or ROOT_DOLL_CODE)
+        final_cat_code, final_cat_name = category_mgr.infer_category(title, cat_code_to_use)
+
+        return {
+            "id": item_id,
+            "title": title,
+            "price": price_val,
+            "price_str": price_str,
+            "url": full_url,
+            "img_url": img_url,
+            "shop": shop,
+            "item_no": item_no,
+            "category_code": final_cat_code,
+            "category_name": final_cat_name,
+            "is_in_stock": is_in_stock,
+            "is_new": is_new,
+            "first_seen_at": now_ts,
+            "updated_at": now_ts,
+        }
+
     def parse_list_page(self, html: str, current_cat_code: str) -> Tuple[List[Dict[str, Any]], bool]:
-        """解析商品列表页 HTML，提取全字段商品信息与分页判断"""
+        """解析商品列表页 HTML，优先使用 lxml 原生极速路径，异常时回退 BeautifulSoup"""
+        if not html:
+            return [], False
+
+        if lxml_html is not None and _XP_BLOCKS is not None:
+            try:
+                return self._parse_list_page_lxml(html, current_cat_code)
+            except Exception as e:
+                logger.debug(f"lxml 极速解析列表页回退 BS4: {e}")
+
+        return self._parse_list_page_bs4(html, current_cat_code)
+
+    def _parse_list_page_lxml(self, html: str, current_cat_code: str) -> Tuple[List[Dict[str, Any]], bool]:
+        """基于 lxml.html 的单次文档序极速解析路径"""
+        doc = lxml_html.fromstring(html)
+        blocks = _XP_BLOCKS(doc)
+        items: List[Dict[str, Any]] = []
+        now_ts = int(time.time())
+
+        for block in blocks:
+            try:
+                item_id = block.get("data-itemidx")
+                link_el = None
+                title_el = None
+                price_el = None
+                img_el = None
+                shop_el = None
+                itemno_el = None
+                stock_el = None
+                has_soldout_mark = False
+                has_cart_btn = False
+                is_new = 0
+
+                for el in block.iter():
+                    if el is block or not isinstance(el.tag, str):
+                        continue
+                    tag = el.tag
+                    cls_str = el.get("class")
+                    classes = cls_str.split() if cls_str else ()
+
+                    if link_el is None and tag == "a":
+                        href_val = el.get("href") or ""
+                        if "detailPage" in href_val or self._has_div_ancestor_with_class(el, block, ("title", "thum")):
+                            link_el = el
+
+                    if title_el is None:
+                        if "title" in classes or (tag == "a" and self._has_div_ancestor_with_class(el, block, ("title",))):
+                            title_el = el
+
+                    if price_el is None:
+                        if "price" in classes or "money" in classes or (tag == "p" and self._has_div_ancestor_with_class(el, block, ("price",))):
+                            price_el = el
+
+                    if img_el is None and tag == "img":
+                        img_el = el
+
+                    if classes:
+                        if shop_el is None and "shop" in classes:
+                            shop_el = el
+                        if itemno_el is None and "itemno" in classes:
+                            itemno_el = el
+                        if stock_el is None and "stock" in classes:
+                            stock_el = el
+                        if not has_soldout_mark and ("soldout" in classes or "sold_out" in classes or "sold" in classes or "addalert" in classes):
+                            has_soldout_mark = True
+                        if not has_cart_btn and ("addcart" in classes or "cart_btn" in classes):
+                            has_cart_btn = True
+                        if not is_new and ("new_arrival" in classes or "new" in classes):
+                            is_new = 1
+
+                    if not has_cart_btn and tag == "a" and cls_str and "addbasket" in cls_str:
+                        has_cart_btn = True
+
+                item_href = link_el.get("href", "") if link_el is not None else ""
+                img_url = ""
+                if img_el is not None:
+                    img_url = img_el.get("src") or img_el.get("data-src") or ""
+
+                parsed = self._build_parsed_item(
+                    item_id=item_id,
+                    item_href=item_href,
+                    title=self._lxml_text_strip(title_el),
+                    price_str=self._lxml_text_strip(price_el),
+                    img_url=img_url,
+                    shop=self._lxml_text_strip(shop_el),
+                    item_no=self._lxml_text_strip(itemno_el),
+                    stock_text=self._lxml_text_strip(stock_el),
+                    has_soldout_mark=has_soldout_mark,
+                    has_cart_btn=has_cart_btn,
+                    is_new=is_new,
+                    current_cat_code=current_cat_code,
+                    now_ts=now_ts,
+                )
+                if parsed is not None:
+                    items.append(parsed)
+            except Exception as e:
+                logger.debug(f"lxml 解析单个商品 block 异常: {e}")
+                continue
+
+        has_next = False
+        for next_a in _XP_NEXT_PAGE(doc):
+            if "次のページ" in "".join(next_a.itertext()):
+                has_next = True
+                break
+
+        return items, has_next
+
+    def _parse_list_page_bs4(self, html: str, current_cat_code: str) -> Tuple[List[Dict[str, Any]], bool]:
+        """解析商品列表页 HTML (BeautifulSoup 安全回退路径)"""
         if not html:
             return [], False
 
         soup = BeautifulSoup(html, BS_PARSER)
         items: List[Dict[str, Any]] = []
+        now_ts = int(time.time())
 
         # 查找所有商品 block
         blocks = soup.select("div.thumlarge div.block, .thumlist div.block, div.block[data-itemidx]")
-        cat_name = category_mgr.get_category_name(current_cat_code)
 
         for block in blocks:
             try:
-                # 1. 唯一标识 item idx
                 item_id = block.get("data-itemidx")
                 link_el = block.select_one("div.title a, div.thum a, a[href*='detailPage']")
                 item_href = link_el.get("href", "") if link_el else ""
 
-                if not item_id and item_href:
-                    # 从 detailPage 链接提取参数 itemCode
-                    parsed_qs = parse_qs(urlparse(item_href).query)
-                    if "itemCode" in parsed_qs:
-                        item_id = parsed_qs["itemCode"][0]
-
-                if not item_id:
-                    continue
-
-                item_id = str(item_id).strip()
-
-                # 2. 标题
                 title_el = block.select_one("div.title p a, div.title a, .title")
                 title = title_el.get_text(strip=True) if title_el else ""
 
-                # 3. 价格与含税提取
                 price_el = block.select_one("div.price p, .price, .money")
                 price_str = price_el.get_text(strip=True) if price_el else ""
-                
-                # 提取纯数字价格 (优先税前基本价，如 2,500円)
-                price_val = 0
-                if price_str:
-                    clean_p = price_str.replace(",", "")
-                    match = re.search(r"(\d+)\s*円", clean_p)
-                    if match:
-                        price_val = int(match.group(1))
 
-                # 4. 商品详情直达链接（剔除任何防缓存临时查询参数 _）
-                full_url = urljoin(BASE_ORDER_URL, item_href) if item_href else f"{DETAIL_ENDPOINT}?itemCode={item_id}&lang=ja"
-                if "_=" in full_url:
-                    parsed_u = urlparse(full_url)
-                    filtered_qs = [(k, v) for k, v in parse_qsl(parsed_u.query, keep_blank_values=True) if k != "_"]
-                    full_url = urlunparse(parsed_u._replace(query=urlencode(filtered_qs)))
-
-                # 5. 缩略图
                 img_el = block.select_one("div.pic img, div.thum img, img")
-                img_url = ""
-                if img_el:
-                    img_url = img_el.get("src") or img_el.get("data-src") or ""
-                    if img_url and not img_url.startswith("http"):
-                        img_url = urljoin(BASE_ORDER_URL, img_url)
+                img_url = (img_el.get("src") or img_el.get("data-src") or "") if img_el else ""
 
-                # 6. 店铺归属 (如 SAHRA, 中野店, 札幌店等)
                 shop_el = block.select_one("div.basic p.shop, .shop")
                 shop = shop_el.get_text(strip=True) if shop_el else ""
 
-                # 7. 商品管理编号
                 itemno_el = block.select_one("div.basic p.itemno, .itemno")
                 item_no = itemno_el.get_text(strip=True) if itemno_el else ""
 
-                # 8. 在库状态检验 (多重互斥严谨判定：必须有加入购物车按钮且无缺货标志)
                 stock_el = block.select_one("div.basic p.stock, .stock")
                 stock_text = stock_el.get_text(strip=True) if stock_el else ""
                 has_soldout_mark = bool(block.select_one(".soldout, .sold_out, .sold, .addalert"))
                 has_cart_btn = bool(block.select_one(".addcart, .cart_btn, a[class*='addbasket'], div.addcart a"))
-                is_soldout = (
-                    has_soldout_mark
-                    or not has_cart_btn
-                    or "売り切れ" in stock_text
-                    or "在庫なし" in stock_text
-                    or "品切" in stock_text
-                )
-                is_in_stock = 0 if is_soldout else 1
-
-                # 9. 新着标签
                 is_new = 1 if block.select_one(".new_arrival, .new") else 0
 
-                now_ts = int(time.time())
-
-                # 优先提取官网链接中的原始官方分类代码，保证100%忠于官网
-                official_cat = ""
-                if item_href:
-                    parsed_qs = parse_qs(urlparse(item_href).query)
-                    if "categoryCode" in parsed_qs and parsed_qs["categoryCode"]:
-                        official_cat = parsed_qs["categoryCode"][0].strip()
-
-                cat_code_to_use = official_cat if (official_cat and category_mgr.is_valid_doll_code(official_cat)) else (current_cat_code or ROOT_DOLL_CODE)
-                final_cat_code, final_cat_name = category_mgr.infer_category(title, cat_code_to_use)
-
-                items.append({
-                    "id": item_id,
-                    "title": title,
-                    "price": price_val,
-                    "price_str": price_str,
-                    "url": full_url,
-                    "img_url": img_url,
-                    "shop": shop,
-                    "item_no": item_no,
-                    "category_code": final_cat_code,
-                    "category_name": final_cat_name,
-                    "is_in_stock": is_in_stock,
-                    "is_new": is_new,
-                    "first_seen_at": now_ts,
-                    "updated_at": now_ts,
-                })
+                parsed = self._build_parsed_item(
+                    item_id=item_id,
+                    item_href=item_href,
+                    title=title,
+                    price_str=price_str,
+                    img_url=img_url,
+                    shop=shop,
+                    item_no=item_no,
+                    stock_text=stock_text,
+                    has_soldout_mark=has_soldout_mark,
+                    has_cart_btn=has_cart_btn,
+                    is_new=is_new,
+                    current_cat_code=current_cat_code,
+                    now_ts=now_ts,
+                )
+                if parsed is not None:
+                    items.append(parsed)
             except Exception as e:
                 logger.debug(f"解析单个商品 block 异常: {e}")
                 continue

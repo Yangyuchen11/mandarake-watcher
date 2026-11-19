@@ -35,10 +35,13 @@ class MandarakeMonitor:
 
         self._check_lock = threading.Lock()
         self._notify_lock = threading.Lock()
+        self._fetch_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="MandarakeFetch")
         self._notify_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="MandarakeNotify")
         self._pending_notify_futures: List[Future] = []
 
         self.seen_ids: "OrderedDict[str, None]" = OrderedDict()
+        self._seen_dirty: bool = False
+        self._last_seen_save_time: float = 0.0
         self.load_seen_cache()
 
         # 上新记录监听器列表
@@ -70,6 +73,7 @@ class MandarakeMonitor:
             self.seen_ids.move_to_end(key)
         else:
             self.seen_ids[key] = None
+            self._seen_dirty = True
             while len(self.seen_ids) > SEEN_MAX_SIZE:
                 self.seen_ids.popitem(last=False)
 
@@ -97,8 +101,11 @@ class MandarakeMonitor:
             futures_wait(pending, timeout=timeout)
 
     def shutdown(self):
-        """优雅关闭监控异步通知执行器"""
+        """优雅关闭监控线程池与异步通知执行器"""
+        if self._seen_dirty:
+            self.save_seen_cache()
         self.wait_notifications(timeout=10.0)
+        self._fetch_executor.shutdown(wait=False)
         self._notify_executor.shutdown(wait=False)
 
     def add_record_listener(self, listener):
@@ -116,6 +123,8 @@ class MandarakeMonitor:
                         self.seen_ids.clear()
                         for pid in data:
                             self._mark_seen(str(pid))
+                        self._seen_dirty = False
+                        self._last_seen_save_time = time.time()
                 logger.info(f"已加载已扫描商品缓存: {len(self.seen_ids)} 件")
             except Exception as e:
                 logger.warning(f"读取已扫描缓存失败: {e}")
@@ -143,12 +152,15 @@ class MandarakeMonitor:
             with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(items_to_save, f)
             os.replace(tmp_file, SEEN_CACHE_FILE)
+            self._seen_dirty = False
+            self._last_seen_save_time = time.time()
         except Exception as e:
             logger.warning(f"持久化已扫描缓存失败: {e}")
 
     def reset_seen(self):
         """清空已发现缓存"""
         self.seen_ids.clear()
+        self._seen_dirty = True
         self.save_seen_cache()
         logger.info("已清空已扫描商品去重缓存")
 
@@ -308,17 +320,16 @@ class MandarakeMonitor:
             q_key = unique_keys[0]
             results_map[q_key] = _fetch_query(q_key)
         else:
-            with ThreadPoolExecutor(max_workers=min(4, len(unique_keys)), thread_name_prefix="MandarakeFetch") as pool:
-                future_to_key = {pool.submit(_fetch_query, k): k for k in unique_keys}
-                for fut, q_key in future_to_key.items():
-                    try:
-                        results_map[q_key] = fut.result()
-                    except Exception as e:
-                        logger.error(f"并发抓取任务异常 ({q_key}): {e}")
-                        results_map[q_key] = {
-                            "ok": False, "items": [], "rate_limited": False,
-                            "cache_control": "", "status_code": 0, "error": str(e)
-                        }
+            future_to_key = {self._fetch_executor.submit(_fetch_query, k): k for k in unique_keys}
+            for fut, q_key in future_to_key.items():
+                try:
+                    results_map[q_key] = fut.result()
+                except Exception as e:
+                    logger.error(f"并发抓取任务异常 ({q_key}): {e}")
+                    results_map[q_key] = {
+                        "ok": False, "items": [], "rate_limited": False,
+                        "cache_control": "", "status_code": 0, "error": str(e)
+                    }
 
         any_rate_limited = any(r.get("rate_limited") for r in results_map.values())
         if any_rate_limited:
@@ -331,6 +342,27 @@ class MandarakeMonitor:
                 self.last_cache_control = cc
                 break
 
+        # 整轮单次批量查询商品在库状态，彻底消除循环内 N+1 查库开销
+        all_pids: List[str] = []
+        seen_pid_set = set()
+        for r in results_map.values():
+            if r.get("ok"):
+                for it in (r.get("items") or []):
+                    p = str(it.get("id", "")).strip()
+                    if p and p not in seen_pid_set:
+                        seen_pid_set.add(p)
+                        all_pids.append(p)
+
+        if hasattr(self.db, "get_products_stock_map"):
+            stock_map = self.db.get_products_stock_map(all_pids)
+        else:
+            stock_map = {}
+            for p in all_pids:
+                rec = self.db.get_product(p)
+                if rec is not None:
+                    stock_map[p] = int(rec.get("is_in_stock", 1))
+
+        sold_out_to_mark: List[str] = []
         failed_rules = 0
         for rule, q_key in active_rules:
             rule_name = rule.get("name", "未命名规则")
@@ -378,19 +410,20 @@ class MandarakeMonitor:
                     continue
 
                 is_new = int(item.get("is_new", 0))
+                prev_stock = stock_map.get(pid)
 
                 # --- 状态与新发现判定 ---
                 if is_in_stock == 0:
-                    prev_rec = self.db.get_product(pid)
                     # 1. 状态由在库(1)刚转为售罄(0)：此前在库记录有效，官网刚被买走切掉
-                    if prev_rec and prev_rec.get("is_in_stock") == 1:
-                        self.db.mark_product_stock(pid, is_in_stock=0)
+                    if prev_stock == 1:
+                        sold_out_to_mark.append(pid)
+                        stock_map[pid] = 0
                         self._mark_seen(pid)
                         logger.info(f"🏷️ [监控追踪] 规则 [{rule_name}] 设定的关注商品已售罄: {title} (ID: {pid})")
                         continue
 
                     # 2. 数据库此前已记录为售罄(0)：历史旧售罄商品，即使仍挂着 is_new 标签也绝不误报秒切
-                    if prev_rec and prev_rec.get("is_in_stock") == 0:
+                    if prev_stock == 0:
                         self._mark_seen(pid)
                         continue
 
@@ -424,8 +457,7 @@ class MandarakeMonitor:
                 # 在库商品 (is_in_stock == 1)
                 if pid in self.seen_ids:
                     # 检查是否为“此前记录为售罄，如今补货/退订复活”的商品
-                    prev_rec = self.db.get_product(pid)
-                    if prev_rec and prev_rec.get("is_in_stock") == 0:
+                    if prev_stock == 0:
                         # 核心校验 1: 官方实时库存核心 API 二次 Double-Check，过滤列表页缓存抖动
                         real_stock = self.scraper.check_item_realtime_stock(pid)
                         if real_stock == 0:
@@ -439,6 +471,7 @@ class MandarakeMonitor:
                         now_time = time.time()
                         last_restock_time = self.restock_notify_times.get(pid, 0.0)
                         self.db.mark_product_stock(pid, is_in_stock=1)
+                        stock_map[pid] = 1
 
                         # 核心校验 2: 复活提醒防抖冷却机制 (默认 30 分钟内不重复发信轰炸)
                         if (now_time - last_restock_time) < self.restock_cooldown_seconds:
@@ -474,8 +507,12 @@ class MandarakeMonitor:
                 # 优先异步分发通知（不阻塞后续规则匹配与数据库写入）
                 self._submit_notification(list(rule_hits), rule_name)
 
-                # 写入数据库归档
+                # 写入数据库归档并同步更新内存库存映射
                 self.db.upsert_products_batch(rule_hits)
+                for hit_item in rule_hits:
+                    hp = str(hit_item.get("id", "")).strip()
+                    if hp:
+                        stock_map[hp] = int(hit_item.get("is_in_stock", 1))
 
                 # 写入上新提醒记录表
                 now_ts = int(time.time())
@@ -505,6 +542,14 @@ class MandarakeMonitor:
                     except Exception as e:
                         logger.warning(f"触发上新记录监听回调异常: {e}")
 
+        if sold_out_to_mark:
+            dedup_sold = list(dict.fromkeys(sold_out_to_mark))
+            if hasattr(self.db, "mark_products_stock_batch"):
+                self.db.mark_products_stock_batch(dedup_sold, is_in_stock=0)
+            else:
+                for spid in dedup_sold:
+                    self.db.mark_product_stock(spid, is_in_stock=0)
+
         self.last_scan_ms = int((time.perf_counter() - scan_start) * 1000)
         if self.last_rate_limited:
             self.last_check_status = f"触发官网限流，等待自动退避 ({self.last_scan_ms}ms)"
@@ -512,5 +557,6 @@ class MandarakeMonitor:
             self.last_check_status = f"部分规则抓取失败 ({self.last_scan_ms}ms)"
         else:
             self.last_check_status = f"正常完成，命中 {len(found_matches)} 件 ({self.last_scan_ms}ms)"
-        self.save_seen_cache()
+        if self._seen_dirty or (self.seen_ids and (time.time() - self._last_seen_save_time) >= 300.0):
+            self.save_seen_cache()
         return found_matches
