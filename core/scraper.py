@@ -7,12 +7,20 @@ import re
 import time
 import random
 import logging
+import threading
+import itertools
 from typing import List, Dict, Optional, Tuple, Any
-from urllib.parse import urljoin, parse_qs, urlparse
+from urllib.parse import urljoin, parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
+
+try:
+    import lxml  # noqa: F401
+    BS_PARSER = "lxml"
+except ImportError:
+    BS_PARSER = "html.parser"
 
 from core.categories import category_mgr, ROOT_DOLL_CODE
 
@@ -47,28 +55,61 @@ class MandarakeScraper:
         self.max_retries = max_retries
         self.min_delay = min_delay
         self.max_delay = max_delay
-        self.session = requests.Session()
-        self.session.headers.update(DEFAULT_HEADERS)
-        # 配置针对 HTTP Keep-Alive 空闲超时的底层透明重试适配器
+        self._thread_local = threading.local()
+        self._cookie_lock = threading.Lock()
+        self._base_cookies: Dict[str, str] = {}
+        self._cb_counter = itertools.count(1)
+        self._owner_thread_id = threading.get_ident()
+        self.session = self._build_session()
+        self.last_fetch_failed = False
+        self.last_rate_limited = False
+        self.last_cache_control = ""
+        self.last_status_code = 0
+        self._ensure_cookies(self.session)
+
+    def _build_session(self) -> requests.Session:
+        """创建带独立连接池与底层安全重试策略的 Session"""
+        sess = requests.Session()
+        sess.headers.update(DEFAULT_HEADERS)
+        # 仅对 502/504 网关瞬断做轻量重试，将 429/503 交由上层退避策略感知处理
         retries = Retry(
-            total=3,
-            connect=3,
-            read=3,
+            total=2,
+            connect=2,
+            read=1,
             backoff_factor=0.3,
-            status_forcelist=[502, 503, 504],
+            status_forcelist=[502, 504],
             raise_on_status=False
         )
         adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=retries)
-        self.session.mount("https://", adapter)
-        self.session.mount("http://", adapter)
-        self.last_fetch_failed = False
-        self._ensure_cookies()
+        sess.mount("https://", adapter)
+        sess.mount("http://", adapter)
+        with self._cookie_lock:
+            if self._base_cookies:
+                sess.cookies.update(self._base_cookies)
+        return sess
 
-    def _ensure_cookies(self):
+    def _get_session(self) -> requests.Session:
+        """获取当前线程专属 Session（主线程沿用 self.session，子线程懒创建隔离会话）"""
+        if threading.get_ident() == self._owner_thread_id:
+            return self.session
+        sess = getattr(self._thread_local, "session", None)
+        if sess is None:
+            sess = self._build_session()
+            self._thread_local.session = sess
+        return sess
+
+    def _ensure_cookies(self, session: Optional[requests.Session] = None):
         """访问主站初始化关键追踪 Cookie (tr_mndrk_user)，防止 listPage 遭遇 302 重定向"""
+        sess = session or self._get_session()
         try:
-            r = self.session.get(BASE_SITE_URL, timeout=self.timeout)
+            with self._cookie_lock:
+                if "tr_mndrk_user" in self._base_cookies and "tr_mndrk_user" not in sess.cookies:
+                    sess.cookies.update(self._base_cookies)
+                    return
+            r = sess.get(BASE_SITE_URL, timeout=self.timeout)
             if r.status_code == 200:
+                with self._cookie_lock:
+                    self._base_cookies.update(requests.utils.dict_from_cookiejar(sess.cookies))
                 logger.debug("Mandarake 基础 Session 与 Cookie 初始化完成")
         except Exception as e:
             logger.warning(f"初始化 Mandarake 基础会话异常: {e}")
@@ -78,58 +119,120 @@ class MandarakeScraper:
         delay = random.uniform(self.min_delay, self.max_delay)
         time.sleep(delay)
 
-    def _get(self, url: str, params: Optional[dict] = None) -> Optional[str]:
-        """带自动重试与反封禁退避机制的 HTTP GET"""
-        self.last_fetch_failed = False
-        last_exc = None
+    def _get_with_meta(
+        self,
+        url: str,
+        params: Optional[dict] = None,
+        max_retries: Optional[int] = None,
+        timeout: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """带自动重试、限流感知与耗时/缓存头元信息的 HTTP GET"""
+        retries = self.max_retries if max_retries is None else max(0, int(max_retries))
+        req_timeout = self.timeout if timeout is None else max(1, int(timeout))
+        sess = self._get_session()
 
-        for attempt in range(self.max_retries + 1):
+        t_start = time.perf_counter()
+        last_exc = None
+        last_status = 0
+        rate_limited = False
+        cache_control = ""
+
+        for attempt in range(retries + 1):
             try:
                 # 检查 session 中是否有必要的 cookie
-                if "tr_mndrk_user" not in self.session.cookies:
-                    self._ensure_cookies()
+                if "tr_mndrk_user" not in sess.cookies:
+                    self._ensure_cookies(sess)
 
-                resp = self.session.get(url, params=params, timeout=self.timeout, allow_redirects=True)
-                
-                # 若被意外重定向回主站，重置 session 后再试
+                resp = sess.get(url, params=params, timeout=req_timeout, allow_redirects=True)
+                last_status = resp.status_code
+                cache_control = resp.headers.get("Cache-Control", "")
+
+                # 若被意外重定向回主站，刷新 cookie 后再试
                 if "order.mandarake.co.jp" not in resp.url and "mandarake.co.jp" in resp.url:
                     logger.warning(f"请求被重定向至 {resp.url}，正在刷新 cookie 重试...")
-                    self._ensure_cookies()
-                    if attempt < self.max_retries:
+                    with self._cookie_lock:
+                        self._base_cookies.pop("tr_mndrk_user", None)
+                    sess.cookies.clear()
+                    self._ensure_cookies(sess)
+                    if attempt < retries:
                         time.sleep(1.0)
                         continue
+                    break
 
                 if resp.status_code == 200:
-                    return resp.text
+                    elapsed_ms = int((time.perf_counter() - t_start) * 1000)
+                    return {
+                        "html": resp.text,
+                        "ok": True,
+                        "status_code": 200,
+                        "rate_limited": False,
+                        "cache_control": cache_control,
+                        "elapsed_ms": elapsed_ms,
+                        "error": "",
+                    }
 
                 # 应对 429 Too Many Requests / 503 繁忙
-                if resp.status_code in (429, 502, 503, 504):
-                    wait_sec = (attempt + 1) * 2.0
-                    logger.warning(f"官网响应 {resp.status_code}，正在退避重试 ({attempt + 1}/{self.max_retries + 1})，等待 {wait_sec}s...")
-                    time.sleep(wait_sec)
-                    continue
-                else:
-                    logger.warning(f"请求 {url} 返回非预期状态码: {resp.status_code}")
+                if resp.status_code in (429, 503):
+                    rate_limited = True
+                    if attempt < retries:
+                        wait_sec = (attempt + 1) * 2.0
+                        logger.warning(f"官网响应 {resp.status_code}，正在退避重试 ({attempt + 1}/{retries + 1})，等待 {wait_sec}s...")
+                        time.sleep(wait_sec)
+                        continue
+                    break
+
+                if resp.status_code in (502, 504):
+                    if attempt < retries:
+                        wait_sec = (attempt + 1) * 2.0
+                        logger.warning(f"官网响应 {resp.status_code}，正在退避重试 ({attempt + 1}/{retries + 1})，等待 {wait_sec}s...")
+                        time.sleep(wait_sec)
+                        continue
+                    break
+
+                logger.warning(f"请求 {url} 返回非预期状态码: {resp.status_code}")
+                break
 
             except Exception as e:
                 last_exc = e
-                # 若连接被远端静默断开，主动重置连接池
+                # 若当前线程连接被远端静默断开，仅重置当前线程连接池
                 try:
-                    self.session.close()
+                    sess.close()
                 except Exception:
                     pass
-                wait_sec = (attempt + 1) * 1.5
-                if attempt > 0:
-                    logger.warning(f"网络请求发生错误: {e}，正在重试 ({attempt + 1}/{self.max_retries + 1})...")
+                if attempt < retries:
+                    wait_sec = (attempt + 1) * 1.5
+                    if attempt > 0:
+                        logger.warning(f"网络请求发生错误: {e}，正在重试 ({attempt + 1}/{retries + 1})...")
+                    else:
+                        logger.debug(f"检测到远端空闲长连接重置 ({e})，正在自动重连...")
+                    time.sleep(wait_sec)
                 else:
-                    logger.debug(f"检测到远端空闲长连接重置 ({e})，正在自动重连...")
-                time.sleep(wait_sec)
+                    logger.debug(f"单次请求异常 ({e})")
 
-        self.last_fetch_failed = True
-        logger.error(f"抓取页面失败: {url}, 参数: {params}, 最后异常: {last_exc}")
-        return None
+        elapsed_ms = int((time.perf_counter() - t_start) * 1000)
+        err_msg = str(last_exc) if last_exc else f"HTTP {last_status}"
+        if retries > 0:
+            logger.error(f"抓取页面失败: {url}, 参数: {params}, 原因: {err_msg}")
+        return {
+            "html": None,
+            "ok": False,
+            "status_code": last_status,
+            "rate_limited": rate_limited,
+            "cache_control": cache_control,
+            "elapsed_ms": elapsed_ms,
+            "error": err_msg,
+        }
 
-    def fetch_category_page(
+    def _get(self, url: str, params: Optional[dict] = None) -> Optional[str]:
+        """带自动重试与反封禁退避机制的 HTTP GET"""
+        res = self._get_with_meta(url, params=params)
+        self.last_fetch_failed = not res["ok"]
+        self.last_rate_limited = res["rate_limited"]
+        self.last_cache_control = res["cache_control"]
+        self.last_status_code = res["status_code"]
+        return res["html"]
+
+    def fetch_category_page_meta(
         self,
         category_code: str = ROOT_DOLL_CODE,
         page: int = 1,
@@ -138,17 +241,13 @@ class MandarakeScraper:
         keyword: Optional[str] = None,
         min_price: Optional[int] = None,
         max_price: Optional[int] = None,
-    ) -> Tuple[List[Dict[str, Any]], bool, int]:
+        polite_delay: bool = True,
+        bypass_cache: bool = False,
+        max_retries: Optional[int] = None,
+        timeout: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """
-        抓取指定【ドール】子分类的特定分页
-        :param category_code: 分类代码 (必须以 020114 开头)
-        :param page: 页码 (1 起始)
-        :param in_stock_only: 是否仅抓取有货在库商品 (True 时 soldOut=1)
-        :param disp_count: 每页抓取条数 (默认 240 最大化效率)
-        :param keyword: 关键词过滤
-        :param min_price: 最低价格
-        :param max_price: 最高价格
-        :return: (商品列表, 是否还有下一页, 当前页商品数)
+        抓取指定【ドール】子分类的特定分页，并返回解析结果与请求元信息
         """
         # 确保只在 ドール 范围内抓取
         if not category_code or not category_code.startswith(ROOT_DOLL_CODE):
@@ -168,21 +267,100 @@ class MandarakeScraper:
             params["minPrice"] = str(min_price)
         if max_price is not None and max_price > 0:
             params["maxPrice"] = str(max_price)
+        if bypass_cache:
+            # 附加唯一防缓存查询参数，穿透 Mandarake 180 秒反向代理缓存直达源站
+            params["_"] = f"{int(time.time() * 1000)}_{next(self._cb_counter)}"
 
-        self._delay_polite()
-        html = self._get(LIST_ENDPOINT, params=params)
-        if not html:
-            return [], False, 0
+        if polite_delay:
+            self._delay_polite()
 
-        items, has_next = self.parse_list_page(html, category_code)
-        return items, has_next, len(items)
+        res = self._get_with_meta(
+            LIST_ENDPOINT,
+            params=params,
+            max_retries=max_retries,
+            timeout=timeout,
+        )
+        self.last_fetch_failed = not res["ok"]
+        self.last_rate_limited = res["rate_limited"]
+        self.last_cache_control = res["cache_control"]
+        self.last_status_code = res["status_code"]
+
+        if not res["html"]:
+            return {
+                "items": [],
+                "has_next": False,
+                "count": 0,
+                "ok": False,
+                "rate_limited": res["rate_limited"],
+                "status_code": res["status_code"],
+                "cache_control": res["cache_control"],
+                "elapsed_ms": res["elapsed_ms"],
+                "error": res["error"],
+            }
+
+        items, has_next = self.parse_list_page(res["html"], category_code)
+        return {
+            "items": items,
+            "has_next": has_next,
+            "count": len(items),
+            "ok": True,
+            "rate_limited": res["rate_limited"],
+            "status_code": res["status_code"],
+            "cache_control": res["cache_control"],
+            "elapsed_ms": res["elapsed_ms"],
+            "error": "",
+        }
+
+    def fetch_category_page(
+        self,
+        category_code: str = ROOT_DOLL_CODE,
+        page: int = 1,
+        in_stock_only: bool = False,
+        disp_count: int = 240,
+        keyword: Optional[str] = None,
+        min_price: Optional[int] = None,
+        max_price: Optional[int] = None,
+        polite_delay: bool = True,
+        bypass_cache: bool = False,
+        max_retries: Optional[int] = None,
+        timeout: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], bool, int]:
+        """
+        抓取指定【ドール】子分类的特定分页
+        :param category_code: 分类代码 (必须以 020114 开头)
+        :param page: 页码 (1 起始)
+        :param in_stock_only: 是否仅抓取有货在库商品 (True 时 soldOut=1)
+        :param disp_count: 每页抓取条数 (默认 240 最大化效率)
+        :param keyword: 关键词过滤
+        :param min_price: 最低价格
+        :param max_price: 最高价格
+        :param polite_delay: 是否在请求前执行礼貌随机延时
+        :param bypass_cache: 是否附加防缓存参数穿透 180 秒代理缓存
+        :param max_retries: 覆盖底层重试次数
+        :param timeout: 覆盖请求超时秒数
+        :return: (商品列表, 是否还有下一页, 当前页商品数)
+        """
+        res = self.fetch_category_page_meta(
+            category_code=category_code,
+            page=page,
+            in_stock_only=in_stock_only,
+            disp_count=disp_count,
+            keyword=keyword,
+            min_price=min_price,
+            max_price=max_price,
+            polite_delay=polite_delay,
+            bypass_cache=bypass_cache,
+            max_retries=max_retries,
+            timeout=timeout,
+        )
+        return res["items"], res["has_next"], res["count"]
 
     def parse_list_page(self, html: str, current_cat_code: str) -> Tuple[List[Dict[str, Any]], bool]:
         """解析商品列表页 HTML，提取全字段商品信息与分页判断"""
         if not html:
             return [], False
 
-        soup = BeautifulSoup(html, "html.parser")
+        soup = BeautifulSoup(html, BS_PARSER)
         items: List[Dict[str, Any]] = []
 
         # 查找所有商品 block
@@ -223,8 +401,12 @@ class MandarakeScraper:
                     if match:
                         price_val = int(match.group(1))
 
-                # 4. 商品详情直达链接
+                # 4. 商品详情直达链接（剔除任何防缓存临时查询参数 _）
                 full_url = urljoin(BASE_ORDER_URL, item_href) if item_href else f"{DETAIL_ENDPOINT}?itemCode={item_id}&lang=ja"
+                if "_=" in full_url:
+                    parsed_u = urlparse(full_url)
+                    filtered_qs = [(k, v) for k, v in parse_qsl(parsed_u.query, keep_blank_values=True) if k != "_"]
+                    full_url = urlunparse(parsed_u._replace(query=urlencode(filtered_qs)))
 
                 # 5. 缩略图
                 img_el = block.select_one("div.pic img, div.thum img, img")
@@ -309,7 +491,7 @@ class MandarakeScraper:
         if not html:
             return None
 
-        soup = BeautifulSoup(html, "html.parser")
+        soup = BeautifulSoup(html, BS_PARSER)
         
         # 标题
         title_el = soup.select_one("h1, .content_head .title, .detail_panel")
@@ -360,7 +542,7 @@ class MandarakeScraper:
             "Origin": "https://order.mandarake.co.jp"
         }
         try:
-            resp = self.session.post(url, data={"idx": str(item_id).strip(), "lang": "ja"}, headers=headers, timeout=8)
+            resp = self._get_session().post(url, data={"idx": str(item_id).strip(), "lang": "ja"}, headers=headers, timeout=8)
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("status") == "ok" and "zaiko" in data:

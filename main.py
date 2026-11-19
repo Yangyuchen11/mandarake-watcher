@@ -78,6 +78,7 @@ def main():
     if args.check:
         logger.info("执行单次 Mandarake 【ドール】 在库与上新检测...")
         matches = monitor.check_once()
+        monitor.wait_notifications(timeout=15.0)
         print(f"\n==========================================")
         print(f"检测完成！命中在库新商品数: {len(matches)}")
         for idx, item in enumerate(matches, 1):

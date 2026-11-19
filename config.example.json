@@ -1,12 +1,15 @@
 {
   "port": 5005,
   "schedule": {
-    "interval_seconds": 60,
-    "retry_count": 5,
-    "retry_delay": 5,
+    "interval_seconds": 15,
+    "retry_count": 3,
+    "retry_delay": 2,
     "burst_duration_minutes": 3,
-    "burst_interval_seconds": 2,
-    "burst_retry_delay": 1
+    "burst_interval_seconds": 3,
+    "burst_retry_delay": 1,
+    "bypass_cache": true,
+    "auto_burst_on_hit": true,
+    "monitor_disp_count": 48
   },
   "rules": [
     {

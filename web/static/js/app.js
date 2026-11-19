@@ -492,12 +492,16 @@ function initEventListeners() {
 
     // 18. 监控频率与重试参数保存
     document.getElementById("btn-save-schedule-cfg")?.addEventListener("click", async () => {
-        const intervalSec = parseInt(document.getElementById("cfg-interval-seconds")?.value, 10) || 60;
-        const retryCount = parseInt(document.getElementById("cfg-retry-count")?.value, 10) || 3;
-        const retryDelay = parseFloat(document.getElementById("cfg-retry-delay")?.value) || 5;
+        const intervalSec = parseInt(document.getElementById("cfg-interval-seconds")?.value, 10) || 15;
+        const parsedRetryCount = parseInt(document.getElementById("cfg-retry-count")?.value, 10);
+        const retryCount = Number.isNaN(parsedRetryCount) ? 3 : Math.max(0, parsedRetryCount);
+        const retryDelay = parseFloat(document.getElementById("cfg-retry-delay")?.value) || 2;
         const burstDuration = parseInt(document.getElementById("cfg-burst-duration")?.value, 10) || 3;
-        const burstInterval = parseFloat(document.getElementById("cfg-burst-interval")?.value) || 2;
+        const burstInterval = parseFloat(document.getElementById("cfg-burst-interval")?.value) || 3;
         const burstRetryDelay = parseFloat(document.getElementById("cfg-burst-retry-delay")?.value) || 1;
+        const bypassCache = document.getElementById("cfg-bypass-cache")?.checked !== false;
+        const autoBurstOnHit = document.getElementById("cfg-auto-burst-on-hit")?.checked !== false;
+        const monitorDispCount = parseInt(document.getElementById("cfg-monitor-disp-count")?.value, 10) || 48;
 
         try {
             const res = await fetch("/api/config", {
@@ -510,12 +514,19 @@ function initEventListeners() {
                         retry_delay: retryDelay,
                         burst_duration_minutes: burstDuration,
                         burst_interval_seconds: burstInterval,
-                        burst_retry_delay: burstRetryDelay
+                        burst_retry_delay: burstRetryDelay,
+                        bypass_cache: bypassCache,
+                        auto_burst_on_hit: autoBurstOnHit,
+                        monitor_disp_count: monitorDispCount
                     }
                 })
             });
             const data = await res.json();
-            alert("调度与重试参数已成功保存！\n日常间隔: " + intervalSec + " 秒 | 爆发持续: " + burstDuration + " 分钟 | 爆发扫描: " + burstInterval + " 秒");
+            alert(
+                "调度与防秒切参数已保存并即时生效！\n" +
+                "日常间隔: " + intervalSec + " 秒 | 爆发扫描: " + burstInterval + " 秒 (持续 " + burstDuration + " 分钟)\n" +
+                "缓存穿透: " + (bypassCache ? "开启" : "关闭") + " | 命中自动追击: " + (autoBurstOnHit ? "开启" : "关闭") + " | 单页条数: " + monitorDispCount
+            );
             loadStats();
         } catch (err) {
             alert("保存失败: " + err);
@@ -1393,17 +1404,23 @@ async function loadMonitorConfig() {
 
         // 1. 调度与重试参数
         const intervalInput = document.getElementById("cfg-interval-seconds");
-        if (intervalInput) intervalInput.value = sched.interval_seconds || 60;
+        if (intervalInput) intervalInput.value = sched.interval_seconds || 15;
         const retryCountInput = document.getElementById("cfg-retry-count");
         if (retryCountInput) retryCountInput.value = sched.retry_count !== undefined ? sched.retry_count : 3;
         const retryDelayInput = document.getElementById("cfg-retry-delay");
-        if (retryDelayInput) retryDelayInput.value = sched.retry_delay !== undefined ? sched.retry_delay : 5;
+        if (retryDelayInput) retryDelayInput.value = sched.retry_delay !== undefined ? sched.retry_delay : 2;
         const burstDurationInput = document.getElementById("cfg-burst-duration");
         if (burstDurationInput) burstDurationInput.value = sched.burst_duration_minutes !== undefined ? sched.burst_duration_minutes : 3;
         const burstIntervalInput = document.getElementById("cfg-burst-interval");
-        if (burstIntervalInput) burstIntervalInput.value = sched.burst_interval_seconds !== undefined ? sched.burst_interval_seconds : 2;
+        if (burstIntervalInput) burstIntervalInput.value = sched.burst_interval_seconds !== undefined ? sched.burst_interval_seconds : 3;
         const burstRetryDelayInput = document.getElementById("cfg-burst-retry-delay");
         if (burstRetryDelayInput) burstRetryDelayInput.value = sched.burst_retry_delay !== undefined ? sched.burst_retry_delay : 1;
+        const bypassCacheCheck = document.getElementById("cfg-bypass-cache");
+        if (bypassCacheCheck) bypassCacheCheck.checked = sched.bypass_cache !== false;
+        const autoBurstCheck = document.getElementById("cfg-auto-burst-on-hit");
+        if (autoBurstCheck) autoBurstCheck.checked = sched.auto_burst_on_hit !== false;
+        const monitorDispSelect = document.getElementById("cfg-monitor-disp-count");
+        if (monitorDispSelect) monitorDispSelect.value = String(sched.monitor_disp_count || 48);
 
         // 2. 邮箱设置
         const emailCheck = document.getElementById("cfg-email-enabled");
@@ -1596,9 +1613,14 @@ function updateSchedulerUI(sched) {
         } else {
             if (dot) dot.className = "status-indicator-dot";
             if (title) {
-                title.textContent = sched.in_burst_mode 
-                    ? `⚡ 高频爆发模式运行中 (每 ${sched.burst_interval_seconds || 2}s 扫描 | 剩余 ${sched.burst_remaining_seconds}s)`
-                    : `监控调度器运行中 (每 ${sched.interval_seconds} 秒巡检一次)`;
+                if (sched.in_backoff) {
+                    title.textContent = `🛡️ 触发官网限流，自动退避中 (剩余 ${sched.backoff_remaining_seconds || 0}s)`;
+                } else if (sched.in_burst_mode) {
+                    const burstLabel = sched.burst_reason === "auto" ? "⚡ 自动追击高频模式运行中" : "⚡ 高频爆发模式运行中";
+                    title.textContent = `${burstLabel} (每 ${sched.burst_interval_seconds || 3}s 扫描 | 剩余 ${sched.burst_remaining_seconds}s)`;
+                } else {
+                    title.textContent = `监控调度器运行中 (每 ${sched.interval_seconds || 15} 秒巡检一次)`;
+                }
             }
             if (pauseBtn) {
                 pauseBtn.innerHTML = `<i class="fa-solid fa-pause"></i> 暂停监控`;
@@ -1635,7 +1657,10 @@ function updateSchedulerUI(sched) {
         const lastCheckStr = sched.last_check_time > 0 
             ? new Date(sched.last_check_time * 1000).toLocaleTimeString("zh-CN", { hour12: false })
             : "从未";
-        meta.textContent = `上次检测: ${lastCheckStr} | 累计轮次: ${sched.total_checks || 0} | 累计命中: ${sched.total_matches || 0}`;
+        const scanMsStr = sched.last_scan_ms > 0 ? ` | 耗时: ${sched.last_scan_ms}ms` : "";
+        const cacheStr = ` | 缓存穿透: ${sched.bypass_cache !== false ? "已开启" : "关闭"}`;
+        const rlStr = sched.total_rate_limits > 0 ? ` | 限流次数: ${sched.total_rate_limits}` : "";
+        meta.textContent = `上次检测: ${lastCheckStr} | 累计轮次: ${sched.total_checks || 0} | 累计命中: ${sched.total_matches || 0}${scanMsStr}${cacheStr}${rlStr}`;
     }
 }
 

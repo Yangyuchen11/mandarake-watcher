@@ -414,10 +414,10 @@
                             <div class="form-group">
                                 <label>日常巡检扫描间隔 (秒)：</label>
                                 <div class="input-with-unit">
-                                    <input type="number" id="cfg-interval-seconds" class="form-input" min="3" value="60">
+                                    <input type="number" id="cfg-interval-seconds" class="form-input" min="3" value="15">
                                     <span class="unit">秒</span>
                                 </div>
-                                <small class="text-muted">到达该间隔自动对所有启用的关键词规则执行一次有货检测</small>
+                                <small class="text-muted">推荐 10~15 秒；遇到官网限流 (429/503) 将自动指数退避保护账号与 IP</small>
                             </div>
 
                             <div class="form-row-2">
@@ -431,12 +431,47 @@
                                 <div class="form-group">
                                     <label>日常重试等待间隔：</label>
                                     <div class="input-with-unit">
-                                        <input type="number" id="cfg-retry-delay" class="form-input" min="0.5" max="60" step="0.5" value="5">
+                                        <input type="number" id="cfg-retry-delay" class="form-input" min="0.5" max="60" step="0.5" value="2">
                                         <span class="unit">秒</span>
                                     </div>
                                 </div>
                             </div>
-                            <small class="text-muted">日常巡检遭遇网络抖动或官网繁忙状态码 (429/503) 时自动重试</small>
+                            <small class="text-muted">日常巡检遭遇网络抖动时自动重试（上限自适应封顶，防止重试风暴阻塞下轮）</small>
+
+                            <!-- 防秒切极速优化参数 -->
+                            <div style="margin: 14px 0 10px 0; border-top: 1px dashed rgba(255,255,255,0.12); padding-top: 10px;">
+                                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                                    <strong style="color: #10b981; font-size: 0.88rem;">
+                                        <i class="fa-solid fa-gauge-high"></i> 防秒切极速优化
+                                    </strong>
+                                    <span style="font-size: 0.72rem; padding: 2px 6px; border-radius: 4px; background: rgba(16,185,129,0.15); color: #10b981;">穿透缓存</span>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="cfg-bypass-cache" checked>
+                                    <span>穿透官网 180 秒列表缓存（实时直连源站）</span>
+                                </label>
+                                <small class="text-muted">官网列表页默认缓存 180 秒，开启后每次扫描直达最新上新源站数据</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="cfg-auto-burst-on-hit" checked>
+                                    <span>命中新品后自动高频追击同批上新</span>
+                                </label>
+                                <small class="text-muted">检测到上架命中时自动进入高频模式，抢占同店同批次连续上架</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label>监控单页拉取条数：</label>
+                                <select id="cfg-monitor-disp-count" class="form-select">
+                                    <option value="48" selected>48 件 (推荐，极速低延迟)</option>
+                                    <option value="120">120 件 (常规)</option>
+                                    <option value="240">240 件 (全量覆盖)</option>
+                                </select>
+                            </div>
 
                             <!-- 高频爆发模式参数 -->
                             <div style="margin: 14px 0 10px 0; border-top: 1px dashed rgba(255,255,255,0.12); padding-top: 10px;">
@@ -461,7 +496,7 @@
                                 <div class="form-group">
                                     <label>爆发期间扫描间隔：</label>
                                     <div class="input-with-unit">
-                                        <input type="number" id="cfg-burst-interval" class="form-input" min="0.5" max="60" step="0.5" value="2">
+                                        <input type="number" id="cfg-burst-interval" class="form-input" min="0.5" max="60" step="0.5" value="3">
                                         <span class="unit">秒</span>
                                     </div>
                                 </div>
@@ -473,7 +508,7 @@
                                     </div>
                                 </div>
                             </div>
-                            <small class="text-muted">高频爆发期间采用更紧凑的扫描与重试间隔，毫秒级抢占新上架</small>
+                            <small class="text-muted">高频爆发期间采用更紧凑的扫描与重试间隔，点击即刻打断等待抢占新上架</small>
 
                             <button class="btn btn-primary btn-block mt-3" id="btn-save-schedule-cfg">
                                 <i class="fa-solid fa-floppy-disk"></i> 保存调度与重试设置

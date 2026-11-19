@@ -450,7 +450,17 @@ def create_app(
         except Exception as e:
             logger.warning(f"广播上新记录事件异常: {e}")
 
+    def on_scheduler_status(sched_status):
+        try:
+            broadcast_sse_event({
+                "type": "scheduler_status",
+                "data": sched_status
+            })
+        except Exception as e:
+            logger.warning(f"广播调度状态事件异常: {e}")
+
     monitor.add_record_listener(on_new_monitor_records)
+    scheduler.add_status_listener(on_scheduler_status)
 
     # --- 上新提醒记录接口 ---
 
@@ -566,6 +576,9 @@ def create_app(
                     monitor.config[k] = v
             notifier_mgr.reload_config(monitor.config)
             save_config_file()
+            if "schedule" in new_cfg:
+                scheduler.wake()
+                broadcast_sse_event({"type": "scheduler_status", "data": scheduler.get_status()})
             return jsonify({"success": True, "config": monitor.config})
 
         rules = monitor.config.get("rules", [])

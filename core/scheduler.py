@@ -24,13 +24,36 @@ class MandarakeScheduler:
         self._resume_event = threading.Event()
         self._interrupt_event = threading.Event()
         self.in_burst_mode = False
+        self.burst_reason: str = ""
         self.burst_end_time = 0.0
+        self.consecutive_rate_limits: int = 0
+        self.backoff_until: float = 0.0
+        self._status_listeners = []
 
         # 每日凌晨 05:00 库存巡检状态追踪
         self.last_daily_sync_date: str = ""
         self.is_syncing_daily: bool = False
         self.last_daily_sync_summary: str = "尚未执行"
         self._sync_lock = threading.Lock()
+
+    def add_status_listener(self, listener):
+        """注册调度状态变更监听器（用于主动向前端 SSE 推送状态切换）"""
+        if callable(listener) and listener not in self._status_listeners:
+            self._status_listeners.append(listener)
+
+    def _emit_status(self):
+        if not self._status_listeners:
+            return
+        st = self.get_status()
+        for cb in list(self._status_listeners):
+            try:
+                cb(st)
+            except Exception:
+                pass
+
+    def wake(self):
+        """立即唤醒调度等待（用于新参数保存后即时生效）"""
+        self._interrupt_event.set()
 
     def start(self):
         if self.running:
@@ -54,6 +77,10 @@ class MandarakeScheduler:
         self._interrupt_event.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=3.0)
+        try:
+            self.monitor.wait_notifications(timeout=10.0)
+        except Exception:
+            pass
         logger.info("Mandarake 定时监控调度器已停止")
 
     def pause(self) -> bool:
@@ -74,19 +101,28 @@ class MandarakeScheduler:
         logger.info("▶️ Mandarake 监控调度器已恢复运行")
         return True
 
-    def trigger_burst(self, duration_minutes: Optional[int] = None):
-        """手动触发爆发检测模式"""
+    def trigger_burst(self, duration_minutes: Optional[int] = None, reason: str = "manual", wake: bool = True):
+        """启动高频爆发模式（支持手动触发与命中自动追击，立即打断日常等待睡眠）"""
         if duration_minutes is None:
             sched_cfg = self.monitor.config.get("schedule", {})
             duration_minutes = int(sched_cfg.get("burst_duration_minutes", 3))
+        duration_minutes = max(1, int(duration_minutes))
         self.in_burst_mode = True
+        self.burst_reason = reason or "manual"
         self.burst_end_time = time.time() + duration_minutes * 60
-        logger.info(f"⚡ 手动启动高频爆发抢购模式，持续 {duration_minutes} 分钟！")
+        if wake:
+            self._interrupt_event.set()
+        if self.burst_reason == "auto":
+            logger.info(f"⚡ 命中新上架商品！自动启动高频追击模式，持续 {duration_minutes} 分钟！")
+        else:
+            logger.info(f"⚡ 手动启动高频爆发抢购模式，持续 {duration_minutes} 分钟！")
 
     def stop_burst(self):
         """手动停止爆发检测模式"""
         self.in_burst_mode = False
+        self.burst_reason = ""
         self.burst_end_time = 0.0
+        self._interrupt_event.set()
         logger.info("⚡ 手动停止高频爆发模式，恢复日常平缓监控")
 
     def run_daily_stock_sync(self) -> Dict[str, Any]:
@@ -194,19 +230,29 @@ class MandarakeScheduler:
         """获取调度器当前状态"""
         now = time.time()
         burst_left = max(0, int(self.burst_end_time - now)) if self.in_burst_mode else 0
+        backoff_left = max(0, int(self.backoff_until - now)) if self.backoff_until > now else 0
         sched_cfg = self.monitor.config.get("schedule", {})
         return {
             "running": self.running,
             "paused": self.paused,
             "in_burst_mode": self.in_burst_mode,
+            "burst_reason": self.burst_reason if self.in_burst_mode else "",
             "burst_remaining_seconds": burst_left,
             "burst_duration_minutes": sched_cfg.get("burst_duration_minutes", 3),
-            "burst_interval_seconds": sched_cfg.get("burst_interval_seconds", 2),
+            "burst_interval_seconds": sched_cfg.get("burst_interval_seconds", 3),
             "burst_retry_delay": sched_cfg.get("burst_retry_delay", 1),
-            "interval_seconds": sched_cfg.get("interval_seconds", 60),
+            "interval_seconds": sched_cfg.get("interval_seconds", 15),
+            "bypass_cache": bool(sched_cfg.get("bypass_cache", True)),
+            "auto_burst_on_hit": bool(sched_cfg.get("auto_burst_on_hit", True)),
+            "monitor_disp_count": int(sched_cfg.get("monitor_disp_count", 48)),
             "last_check_time": self.monitor.last_check_time,
+            "last_scan_ms": getattr(self.monitor, "last_scan_ms", 0),
+            "last_cache_control": getattr(self.monitor, "last_cache_control", ""),
             "total_checks": self.monitor.total_checks,
             "total_matches": self.monitor.total_matches,
+            "total_rate_limits": getattr(self.monitor, "total_rate_limits", 0),
+            "in_backoff": backoff_left > 0,
+            "backoff_remaining_seconds": backoff_left,
             "last_daily_sync_date": self.last_daily_sync_date,
             "is_syncing_daily": self.is_syncing_daily,
             "last_daily_sync_summary": self.last_daily_sync_summary
@@ -232,25 +278,66 @@ class MandarakeScheduler:
 
                 # 2. 检查爆发模式状态
                 now = time.time()
-                if self.in_burst_mode:
-                    if now >= self.burst_end_time:
-                        self.in_burst_mode = False
-                        logger.info("爆发检测模式结束，恢复日常平缓监控")
+                if self.in_burst_mode and now >= self.burst_end_time:
+                    self.in_burst_mode = False
+                    self.burst_reason = ""
+                    self.burst_end_time = 0.0
+                    logger.info("爆发检测模式结束，恢复日常平缓监控")
+                    self._emit_status()
 
-                # 3. 执行日常上新与规则监控检测
+                # 3. 执行日常上新与规则监控检测（统计单轮耗时以消除轮询漂移）
+                cycle_start = time.time()
                 matches = self.monitor.check_once()
+                cycle_elapsed = time.time() - cycle_start
 
-                # 4. 根据模式确定睡眠间隔
+                if self._stop_event.is_set() or self.paused:
+                    continue
+
+                # 4. 429/503 限流自适应防封退避
                 sched_cfg = self.monitor.config.get("schedule", {})
-                if self.in_burst_mode:
-                    burst_interval = float(sched_cfg.get("burst_interval_seconds", 2.0))
-                    sleep_interval = max(0.5, burst_interval)
-                else:
-                    sleep_interval = max(3, int(sched_cfg.get("interval_seconds", 60)))
-                    if not matches:
-                        logger.info(f"⚡ [监控巡检] 第 {self.monitor.total_checks} 轮扫描完成，暂无新上架商品 (下次扫描在 {sleep_interval} 秒后)")
+                if getattr(self.monitor, "last_rate_limited", False):
+                    self.consecutive_rate_limits += 1
+                    backoff_sec = min(120, 20 * (2 ** (self.consecutive_rate_limits - 1)))
+                    self.backoff_until = time.time() + backoff_sec
+                    if self.in_burst_mode:
+                        self.in_burst_mode = False
+                        self.burst_reason = ""
+                        self.burst_end_time = 0.0
+                    logger.warning(
+                        f"🛡️ 检测到官网限流 (连续 {self.consecutive_rate_limits} 次)，已暂停高频并自动退避 {backoff_sec} 秒..."
+                    )
+                    self._emit_status()
+                    self._interrupt_event.clear()
+                    self._interrupt_event.wait(timeout=backoff_sec)
+                    self._interrupt_event.clear()
+                    self.backoff_until = 0.0
+                    continue
 
-                # 睡眠可被 pause()、stop() 立即中断
+                self.consecutive_rate_limits = 0
+                self.backoff_until = 0.0
+
+                # 5. 命中新上架后自动开启/续期短时高频追击，捕获同批次连续上架商品
+                if matches and bool(sched_cfg.get("auto_burst_on_hit", True)):
+                    self.trigger_burst(reason="auto", wake=False)
+                    self._emit_status()
+
+                # 6. 根据模式确定精确睡眠间隔（扣除本轮抓取耗时）
+                if self.in_burst_mode:
+                    burst_interval = float(sched_cfg.get("burst_interval_seconds", 3.0))
+                    target_interval = max(0.5, burst_interval)
+                    sleep_interval = max(0.5, target_interval - cycle_elapsed)
+                else:
+                    target_interval = max(3.0, float(sched_cfg.get("interval_seconds", 15)))
+                    sleep_interval = max(0.5, target_interval - cycle_elapsed)
+                    if not matches:
+                        cache_tag = "缓存穿透" if getattr(self.monitor, "last_bypass_cache", True) else "普通请求"
+                        logger.info(
+                            f"⚡ [监控巡检] 第 {self.monitor.total_checks} 轮扫描完成 "
+                            f"(耗时 {getattr(self.monitor, 'last_scan_ms', 0)}ms | {cache_tag})，"
+                            f"暂无新上架商品 (下次扫描在 {sleep_interval:.1f} 秒后)"
+                        )
+
+                # 睡眠可被 pause()、stop()、trigger_burst()、wake() 立即中断
                 self._interrupt_event.clear()
                 self._interrupt_event.wait(timeout=sleep_interval)
                 self._interrupt_event.clear()
