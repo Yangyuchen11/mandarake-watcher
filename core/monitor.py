@@ -4,6 +4,7 @@ Mandarake 【ドール】 实时上新与在库变动监控引擎
 支持配置扫描间隔、扫描失败重试次数及重试间隔
 """
 import os
+import re
 import time
 import json
 import logging
@@ -63,6 +64,24 @@ class MandarakeMonitor:
         self.last_bypass_cache: bool = bool(self.config.get("schedule", {}).get("bypass_cache", True))
         self.total_rate_limits: int = 0
         self.last_fetch_queries: int = 0
+
+    @staticmethod
+    def _normalize_keywords(raw_keywords: Any) -> List[str]:
+        """规范化拆分关键词列表（兼容空格、英文逗号 ,、中文逗号 ，、顿号 、）"""
+        if not raw_keywords:
+            return []
+        entries = [raw_keywords] if isinstance(raw_keywords, str) else list(raw_keywords)
+        result: List[str] = []
+        seen = set()
+        for entry in entries:
+            if entry is None:
+                continue
+            for token in re.split(r"[\s,，、]+", str(entry)):
+                t = token.strip()
+                if t and t not in seen:
+                    seen.add(t)
+                    result.append(t)
+        return result
 
     def _mark_seen(self, pid: str):
         """有序 LRU 标记商品已扫描，最近见过的商品移至尾部避免随机淘汰"""
@@ -177,7 +196,7 @@ class MandarakeMonitor:
                 if not r.get("enabled", True):
                     continue
                 cat_code = r.get("category_code") or ROOT_DOLL_CODE
-                kws = [k.strip() for k in r.get("keywords", []) if k.strip()]
+                kws = self._normalize_keywords(r.get("keywords", []))
                 match_mode = r.get("match_mode", "and").lower()
                 kw_param = " ".join(kws) if (kws and match_mode == "and") else (kws[0] if len(kws) == 1 else None)
                 q_key = (cat_code, kw_param)
@@ -261,7 +280,7 @@ class MandarakeMonitor:
             if not rule.get("enabled", True):
                 continue
             cat_code = rule.get("category_code") or ROOT_DOLL_CODE
-            kws = [k.strip() for k in rule.get("keywords", []) if k.strip()]
+            kws = self._normalize_keywords(rule.get("keywords", []))
             match_mode = rule.get("match_mode", "and").lower()
             kw_param = " ".join(kws) if (kws and match_mode == "and") else (kws[0] if len(kws) == 1 else None)
             active_rules.append((rule, (cat_code, kw_param)))
@@ -366,8 +385,8 @@ class MandarakeMonitor:
         failed_rules = 0
         for rule, q_key in active_rules:
             rule_name = rule.get("name", "未命名规则")
-            kws = [k.strip() for k in rule.get("keywords", []) if k.strip()]
-            ex_kws = [k.strip() for k in rule.get("exclude_keywords", []) if k.strip()]
+            kws = self._normalize_keywords(rule.get("keywords", []))
+            ex_kws = self._normalize_keywords(rule.get("exclude_keywords", []))
             match_mode = rule.get("match_mode", "and").lower()  # and 或 or
             max_price = rule.get("max_price", 0)
 

@@ -3,6 +3,7 @@ Mandarake Web 控制台与 REST / SSE API 服务
 提供现代化可视化管理看板，支持分类树筛选、海量商品阅览、后台爬虫调度、一键下单与终端实时流
 """
 import os
+import re
 import json
 import queue
 import logging
@@ -291,6 +292,23 @@ def create_app(
         target_cfg = cfg if cfg is not None else monitor.config
         return save_cfg_helper(target_cfg)
 
+    def normalize_keyword_list(raw_value) -> list:
+        """统一拆分并去重关键词列表（兼容空格、英文逗号 ,、中文逗号 ，、顿号 、）"""
+        if not raw_value:
+            return []
+        entries = [raw_value] if isinstance(raw_value, str) else list(raw_value)
+        result = []
+        seen = set()
+        for entry in entries:
+            if entry is None:
+                continue
+            for token in re.split(r"[\s,，、]+", str(entry)):
+                t = token.strip()
+                if t and t not in seen:
+                    seen.add(t)
+                    result.append(t)
+        return result
+
     def normalize_rules(rules_list):
         modified = False
         for idx, r in enumerate(rules_list):
@@ -302,6 +320,14 @@ def create_app(
                 modified = True
             if "notify_instant_soldout" not in r:
                 r["notify_instant_soldout"] = True
+                modified = True
+            norm_kw = normalize_keyword_list(r.get("keywords"))
+            if r.get("keywords") != norm_kw:
+                r["keywords"] = norm_kw
+                modified = True
+            norm_ex = normalize_keyword_list(r.get("exclude_keywords"))
+            if r.get("exclude_keywords") != norm_ex:
+                r["exclude_keywords"] = norm_ex
                 modified = True
         return modified
 
@@ -316,22 +342,62 @@ def create_app(
     def api_save_rule():
         rule_data = request.get_json(silent=True) or {}
         rules = monitor.config.get("rules", [])
-        rule_id = str(rule_data.get("id") or "").strip()
+        raw_id = str(rule_data.get("id") or "").strip()
+        has_explicit_id = bool(raw_id and raw_id not in ("undefined", "null"))
         rule_name = str(rule_data.get("name") or "").strip()
-        if not rule_id or rule_id in ("undefined", "null"):
-            rule_id = f"rule_{int(time.time())}"
-        rule_data["id"] = rule_id
-        if "enabled" not in rule_data:
-            rule_data["enabled"] = True
+        if not rule_name:
+            return jsonify({"success": False, "message": "规则名称不能为空", "rules": rules}), 400
 
-        existing_idx = next(
-            (i for i, r in enumerate(rules) if (r.get("id") and str(r.get("id")) == rule_id) or (rule_name and str(r.get("name")) == rule_name)),
-            None
-        )
+        existing_idx = None
+        if has_explicit_id:
+            existing_idx = next(
+                (i for i, r in enumerate(rules) if r.get("id") and str(r.get("id")) == raw_id),
+                None
+            )
+        if existing_idx is None and rule_name:
+            existing_idx = next(
+                (i for i, r in enumerate(rules) if str(r.get("name") or "") == rule_name),
+                None
+            )
+
+        rule_id = raw_id if has_explicit_id else f"rule_{int(time.time())}"
+        if existing_idx is not None and not has_explicit_id and rules[existing_idx].get("id"):
+            rule_id = str(rules[existing_idx]["id"])
+
+        try:
+            max_price = max(0, int(rule_data.get("max_price") or 0))
+        except (ValueError, TypeError):
+            max_price = 0
+
+        normalized_rule = {
+            "id": rule_id,
+            "name": rule_name,
+            "category_code": str(rule_data.get("category_code") or ROOT_DOLL_CODE).strip() or ROOT_DOLL_CODE,
+            "keywords": normalize_keyword_list(rule_data.get("keywords")),
+            "exclude_keywords": normalize_keyword_list(rule_data.get("exclude_keywords")),
+            "match_mode": "or" if str(rule_data.get("match_mode", "and")).strip().lower() == "or" else "and",
+            "max_price": max_price,
+        }
+
         if existing_idx is not None:
-            rules[existing_idx] = rule_data
+            prev_rule = rules[existing_idx]
+            if "enabled" in rule_data and rule_data.get("enabled") is not None:
+                normalized_rule["enabled"] = bool(rule_data["enabled"])
+            else:
+                normalized_rule["enabled"] = bool(prev_rule.get("enabled", True))
+            if "notify_instant_soldout" in rule_data and rule_data.get("notify_instant_soldout") is not None:
+                normalized_rule["notify_instant_soldout"] = bool(rule_data["notify_instant_soldout"])
+            else:
+                normalized_rule["notify_instant_soldout"] = bool(prev_rule.get("notify_instant_soldout", True))
+            rules[existing_idx] = normalized_rule
         else:
-            rules.append(rule_data)
+            normalized_rule["enabled"] = bool(rule_data.get("enabled", True)) if rule_data.get("enabled") is not None else True
+            normalized_rule["notify_instant_soldout"] = (
+                bool(rule_data.get("notify_instant_soldout", True))
+                if rule_data.get("notify_instant_soldout") is not None
+                else True
+            )
+            rules.append(normalized_rule)
 
         monitor.config["rules"] = rules
         save_config_file()

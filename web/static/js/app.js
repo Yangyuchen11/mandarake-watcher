@@ -749,7 +749,8 @@ function initEventListeners() {
 
     // 保存规则
     document.getElementById("btn-save-rule-modal")?.addEventListener("click", async () => {
-        const id = document.getElementById("modal-rule-id")?.value || "";
+        const idEl = document.getElementById("modal-rule-id");
+        const id = idEl?.value.trim() || "";
         const name = document.getElementById("modal-rule-name")?.value.trim() || "";
         const catCode = document.getElementById("modal-rule-cat")?.value || "020114";
         const kwStr = document.getElementById("modal-rule-keywords")?.value.trim() || "";
@@ -763,8 +764,12 @@ function initEventListeners() {
             return;
         }
 
-        const keywords = kwStr ? kwStr.split(/\s+/).filter(Boolean) : [];
-        const excludeKeywords = exStr ? exStr.split(/\s+/).filter(Boolean) : [];
+        const keywords = splitKeywordsInput(kwStr);
+        const excludeKeywords = splitKeywordsInput(exStr);
+        const isEdit = Boolean(id);
+        const enabledVal = isEdit && idEl?.dataset.enabled !== undefined
+            ? idEl.dataset.enabled !== "false"
+            : true;
 
         try {
             const res = await fetch("/api/monitor/rules/save", {
@@ -778,10 +783,14 @@ function initEventListeners() {
                     exclude_keywords: excludeKeywords,
                     match_mode: matchMode,
                     max_price: maxPrice,
-                    enabled: true
+                    enabled: enabledVal
                 })
             });
             const data = await res.json();
+            if (!data.success) {
+                alert("保存规则失败: " + (data.message || "未知错误"));
+                return;
+            }
             ruleModal?.classList.remove("active");
             alert(data.message);
             renderRulesTable(data.rules || []);
@@ -1452,6 +1461,12 @@ async function loadMonitorConfig() {
     }
 }
 
+function splitKeywordsInput(str) {
+    if (!str) return [];
+    const tokens = String(str).split(/[\s,，、]+/).map(s => s.trim()).filter(Boolean);
+    return Array.from(new Set(tokens));
+}
+
 function renderRulesTable(rules) {
     const tbody = document.getElementById("tbody-rules");
     if (!tbody) return;
@@ -1465,18 +1480,21 @@ function renderRulesTable(rules) {
     rules.forEach((rule, idx) => {
         const tr = document.createElement("tr");
 
+        const normKeywords = splitKeywordsInput(Array.isArray(rule.keywords) ? rule.keywords.join(" ") : rule.keywords);
+        const normExclude = splitKeywordsInput(Array.isArray(rule.exclude_keywords) ? rule.exclude_keywords.join(" ") : rule.exclude_keywords);
+
         // 关键词渲染 (含 AND / OR 模式标识)
         let kwHtml = "-";
-        if (rule.keywords && rule.keywords.length > 0) {
+        if (normKeywords.length > 0) {
             const mode = (rule.match_mode || "and").toUpperCase();
             kwHtml = `<span class="badge-mode">${mode}</span>` + 
-                rule.keywords.map(k => `<span class="kw-pill">${escapeHtml(k)}</span>`).join("");
+                normKeywords.map(k => `<span class="kw-pill">${escapeHtml(k)}</span>`).join("");
         }
 
         // 排除词渲染
         let exHtml = "-";
-        if (rule.exclude_keywords && rule.exclude_keywords.length > 0) {
-            exHtml = rule.exclude_keywords.map(e => `<span class="ex-kw-pill">-${escapeHtml(e)}</span>`).join("");
+        if (normExclude.length > 0) {
+            exHtml = normExclude.map(e => `<span class="ex-kw-pill">-${escapeHtml(e)}</span>`).join("");
         }
 
         const maxPriceStr = rule.max_price > 0 ? `≤ ${rule.max_price.toLocaleString()}円` : "不限";
@@ -1497,9 +1515,14 @@ function renderRulesTable(rules) {
                 </label>
             </td>
             <td>
-                <button class="btn btn-sm btn-outline-danger btn-delete-rule" title="删除规则">
-                    <i class="fa-solid fa-trash-can"></i>
-                </button>
+                <div class="rule-actions">
+                    <button class="btn btn-sm btn-outline-primary btn-edit-rule" title="编辑规则">
+                        <i class="fa-solid fa-pen-to-square"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger btn-delete-rule" title="删除规则">
+                        <i class="fa-solid fa-trash-can"></i>
+                    </button>
+                </div>
             </td>
         `;
 
@@ -1507,6 +1530,13 @@ function renderRulesTable(rules) {
         if (statusToggle) {
             statusToggle.addEventListener("change", () => {
                 toggleRuleStatus(ruleId, ruleName, statusToggle.checked);
+            });
+        }
+
+        const editBtn = tr.querySelector(".btn-edit-rule");
+        if (editBtn) {
+            editBtn.addEventListener("click", () => {
+                openRuleModal({ ...rule, id: ruleId });
             });
         }
 
@@ -1525,16 +1555,48 @@ function openRuleModal(rule = null) {
     const modal = document.getElementById("rule-modal");
     if (!modal) return;
 
-    document.getElementById("modal-rule-id").value = rule ? (rule.id || "") : "";
-    document.getElementById("modal-rule-name").value = rule ? (rule.name || "") : "";
-    document.getElementById("modal-rule-cat").value = rule ? (rule.category_code || "020114") : "020114";
-    document.getElementById("modal-rule-keywords").value = rule && rule.keywords ? rule.keywords.join(" ") : "";
-    document.getElementById("modal-rule-exclude").value = rule && rule.exclude_keywords ? rule.exclude_keywords.join(" ") : "難あり ジャンク";
-    document.getElementById("modal-rule-max-price").value = rule && rule.max_price ? rule.max_price : "";
-    
+    const isEdit = Boolean(rule);
+    const titleEl = document.getElementById("rule-modal-title");
+    if (titleEl) {
+        titleEl.innerHTML = isEdit
+            ? `<i class="fa-solid fa-pen-to-square"></i> 编辑关键词监控规则`
+            : `<i class="fa-solid fa-plus-circle"></i> 添加关键词监控规则`;
+    }
+    const saveBtnEl = document.getElementById("btn-save-rule-modal");
+    if (saveBtnEl) {
+        saveBtnEl.innerHTML = isEdit
+            ? `<i class="fa-solid fa-check"></i> 保存修改`
+            : `<i class="fa-solid fa-check"></i> 保存并启用规则`;
+    }
+
+    const idInput = document.getElementById("modal-rule-id");
+    if (idInput) {
+        idInput.value = isEdit ? (rule.id || "") : "";
+        idInput.dataset.enabled = isEdit ? String(rule.enabled !== false) : "true";
+    }
+
+    document.getElementById("modal-rule-name").value = isEdit ? (rule.name || "") : "";
+
+    const catSelect = document.getElementById("modal-rule-cat");
+    if (catSelect) {
+        const targetCat = isEdit ? (rule.category_code || "020114") : "020114";
+        const hasOption = Array.from(catSelect.options).some(opt => opt.value === targetCat);
+        catSelect.value = hasOption ? targetCat : "020114";
+    }
+
+    const kwDisplay = isEdit && rule.keywords
+        ? splitKeywordsInput(Array.isArray(rule.keywords) ? rule.keywords.join(" ") : rule.keywords).join(" ")
+        : "";
+    const exDisplay = isEdit && rule.exclude_keywords
+        ? splitKeywordsInput(Array.isArray(rule.exclude_keywords) ? rule.exclude_keywords.join(" ") : rule.exclude_keywords).join(" ")
+        : (isEdit ? "" : "難あり ジャンク");
+
+    document.getElementById("modal-rule-keywords").value = kwDisplay;
+    document.getElementById("modal-rule-exclude").value = exDisplay;
+    document.getElementById("modal-rule-max-price").value = isEdit && rule.max_price ? rule.max_price : "";
 
     // 模式切换
-    const mode = rule ? (rule.match_mode || "and") : "and";
+    const mode = (isEdit ? (rule.match_mode || "and") : "and").toLowerCase();
     document.querySelectorAll("#modal-rule-mode-group .seg-btn").forEach(btn => {
         btn.classList.toggle("active", btn.getAttribute("data-mode") === mode);
     });
