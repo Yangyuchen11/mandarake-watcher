@@ -643,17 +643,139 @@ class MandarakeArchiveDB:
             return False
 
     def query_orders(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
-        """查询订单历史记录"""
+        """查询订单历史记录（自动关联 products 表补全历史记录缺失的图片/店铺/链接）"""
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                SELECT * FROM orders ORDER BY created_at DESC LIMIT ? OFFSET ?
+                SELECT
+                    o.*,
+                    COALESCE(NULLIF(o.img_url, ''), p.img_url, '') AS resolved_img_url,
+                    COALESCE(NULLIF(o.shop, ''), p.shop, '') AS resolved_shop,
+                    COALESCE(NULLIF(o.url, ''), p.url, '') AS resolved_url
+                FROM orders o
+                LEFT JOIN products p ON o.item_id = p.id
+                ORDER BY o.created_at DESC
+                LIMIT ? OFFSET ?
                 """, (limit, offset))
-                return [dict(r) for r in cursor.fetchall()]
+                items = []
+                for r in cursor.fetchall():
+                    d = dict(r)
+                    d["img_url"] = d.pop("resolved_img_url", d.get("img_url", ""))
+                    d["shop"] = d.pop("resolved_shop", d.get("shop", ""))
+                    d["url"] = d.pop("resolved_url", d.get("url", ""))
+                    raw_str = d.get("raw_details") or ""
+                    parsed: Dict[str, Any] = {}
+                    if raw_str:
+                        try:
+                            maybe = json.loads(raw_str)
+                            if isinstance(maybe, dict):
+                                parsed = maybe
+                        except Exception:
+                            parsed = {}
+                    d["parsed_details"] = parsed
+                    d["payment_method"] = parsed.get("payment_method") or parsed.get("pay_method") or ""
+                    d["payment_label"] = parsed.get("payment_label", "")
+                    d["order_number"] = parsed.get("order_number", "")
+                    d["rule_name"] = parsed.get("rule_name", "")
+                    d["payment_url"] = parsed.get("payment_url", "")
+                    items.append(d)
+                return items
         except Exception as e:
             logger.error(f"查询订单记录失败: {e}")
             return []
+
+    def count_today_orders(
+        self,
+        trigger_type: Optional[str] = None,
+        dry_run: Optional[int] = None,
+        statuses: Optional[List[str]] = None
+    ) -> int:
+        """统计今日订单数量（支持按触发方式、演练/实盘、状态过滤）"""
+        try:
+            now = time.localtime()
+            today_start = int(time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, 0, 0, -1)))
+            where = ["created_at >= ?"]
+            params: List[Any] = [today_start]
+            if trigger_type is not None:
+                where.append("trigger_type = ?")
+                params.append(trigger_type)
+            if dry_run is not None:
+                where.append("dry_run = ?")
+                params.append(int(dry_run))
+            if statuses:
+                placeholders = ",".join(["?"] * len(statuses))
+                where.append(f"status IN ({placeholders})")
+                params.extend(statuses)
+            sql = f"SELECT COUNT(*) AS cnt FROM orders WHERE {' AND '.join(where)}"
+            with self._get_connection() as conn:
+                row = conn.execute(sql, params).fetchone()
+                return int(row["cnt"] or 0) if row else 0
+        except Exception as e:
+            logger.error(f"统计今日订单数量失败: {e}")
+            return 0
+
+    def has_recent_order(
+        self,
+        item_id: str,
+        within_seconds: int = 3600,
+        statuses: Optional[List[str]] = None
+    ) -> bool:
+        """判断指定商品近期是否已有下单记录（用于防重复抢购）"""
+        pid = str(item_id or "").strip()
+        if not pid:
+            return False
+        try:
+            since_ts = int(time.time()) - max(0, int(within_seconds))
+            where = ["item_id = ?", "created_at >= ?"]
+            params: List[Any] = [pid, since_ts]
+            if statuses:
+                placeholders = ",".join(["?"] * len(statuses))
+                where.append(f"status IN ({placeholders})")
+                params.extend(statuses)
+            sql = f"SELECT 1 FROM orders WHERE {' AND '.join(where)} LIMIT 1"
+            with self._get_connection() as conn:
+                row = conn.execute(sql, params).fetchone()
+                return row is not None
+        except Exception as e:
+            logger.error(f"查询商品近期订单记录失败 ({pid}): {e}")
+            return False
+
+    def get_order_stats(self) -> Dict[str, Any]:
+        """获取抢购/订单记录统计概览"""
+        try:
+            now = time.localtime()
+            today_start = int(time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, 0, 0, -1)))
+            with self._get_connection() as conn:
+                row = conn.execute("""
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS today_count,
+                    SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
+                    SUM(CASE WHEN status = 'DRY_RUN' THEN 1 ELSE 0 END) AS dry_run_count,
+                    SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed_count,
+                    SUM(CASE WHEN status = 'NEED_PAYMENT_AUTH' THEN 1 ELSE 0 END) AS need_auth_count
+                FROM orders
+                """, (today_start,)).fetchone()
+                if not row:
+                    return {
+                        "total": 0, "today_count": 0, "success_count": 0,
+                        "dry_run_count": 0, "failed_count": 0, "need_auth_count": 0
+                    }
+                return {
+                    "total": int(row["total"] or 0),
+                    "today_count": int(row["today_count"] or 0),
+                    "success_count": int(row["success_count"] or 0),
+                    "dry_run_count": int(row["dry_run_count"] or 0),
+                    "failed_count": int(row["failed_count"] or 0),
+                    "need_auth_count": int(row["need_auth_count"] or 0),
+                }
+        except Exception as e:
+            logger.error(f"获取订单统计失败: {e}")
+            return {
+                "total": 0, "today_count": 0, "success_count": 0,
+                "dry_run_count": 0, "failed_count": 0, "need_auth_count": 0
+            }
 
     def delete_order(self, order_id: str) -> bool:
         """删除指定订单记录"""

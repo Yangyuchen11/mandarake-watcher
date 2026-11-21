@@ -12,7 +12,7 @@
     <link rel="alternate icon" href="/favicon.ico">
     <link rel="manifest" href="/static/manifest.json">
     <link rel="apple-touch-icon" href="/static/icon-192.png">
-    <link rel="stylesheet" href="/static/css/style.css?v=3">
+    <link rel="stylesheet" href="/static/css/style.css?v=5">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
@@ -47,8 +47,12 @@
                 </div>
             </div>
 
-            <!-- 系统状态 -->
+            <!-- 系统与抢购账号状态 -->
             <div class="header-actions">
+                <div class="auth-indicator purchase-pill" id="purchase-header-pill" title="点击前往【抢购设置】管理登录态、地址与支付方式">
+                    <span class="status-dot disconnected" id="purchase-header-dot"></span>
+                    <span class="auth-text" id="purchase-header-text">未登录 | 演练模式</span>
+                </div>
                 <div class="auth-indicator" id="system-status-pill" style="background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.3);">
                     <span class="status-dot connected"></span>
                     <span class="auth-text" id="status-text" style="color: #4ade80;">监控与爬虫就绪</span>
@@ -76,6 +80,11 @@
                 <i class="fa-solid fa-clock-rotate-left"></i>
                 <span class="tab-text">上新记录</span>
                 <span class="tab-badge" id="monitor-records-badge" style="display: none;">0</span>
+            </button>
+            <button class="tab-btn" data-tab="tab-purchase">
+                <i class="fa-solid fa-bolt"></i>
+                <span class="tab-text">抢购设置</span>
+                <span class="tab-badge" id="purchase-orders-badge" style="display: none;">0</span>
             </button>
             <button class="tab-btn" data-tab="tab-terminal">
                 <i class="fa-solid fa-terminal"></i>
@@ -414,10 +423,10 @@
                             <div class="form-group">
                                 <label>日常巡检扫描间隔 (秒)：</label>
                                 <div class="input-with-unit">
-                                    <input type="number" id="cfg-interval-seconds" class="form-input" min="3" value="15">
+                                    <input type="number" id="cfg-interval-seconds" class="form-input" min="0.1" step="0.1" value="15">
                                     <span class="unit">秒</span>
                                 </div>
-                                <small class="text-muted">推荐 10~15 秒；遇到官网限流 (429/503) 将自动指数退避保护账号与 IP</small>
+                                <small class="text-muted">最低支持 0.1 秒（日常推荐 10~15 秒）；遇到官网限流 (429/503) 将自动指数退避保护账号与 IP</small>
                             </div>
 
                             <div class="form-row-2">
@@ -431,7 +440,7 @@
                                 <div class="form-group">
                                     <label>日常重试等待间隔：</label>
                                     <div class="input-with-unit">
-                                        <input type="number" id="cfg-retry-delay" class="form-input" min="0.5" max="60" step="0.5" value="2">
+                                        <input type="number" id="cfg-retry-delay" class="form-input" min="0.1" max="60" step="0.1" value="2">
                                         <span class="unit">秒</span>
                                     </div>
                                 </div>
@@ -496,7 +505,7 @@
                                 <div class="form-group">
                                     <label>爆发期间扫描间隔：</label>
                                     <div class="input-with-unit">
-                                        <input type="number" id="cfg-burst-interval" class="form-input" min="0.5" max="60" step="0.5" value="3">
+                                        <input type="number" id="cfg-burst-interval" class="form-input" min="0.1" max="60" step="0.1" value="3">
                                         <span class="unit">秒</span>
                                     </div>
                                 </div>
@@ -620,7 +629,8 @@
                                             <th>匹配关键词 (AND/OR)</th>
                                             <th>排除关键词</th>
                                             <th>价格上限</th>
-                                                                                        <th>状态</th>
+                                            <th>自动抢购</th>
+                                            <th>状态</th>
                                             <th>操作</th>
                                         </tr>
                                     </thead>
@@ -711,7 +721,402 @@
             </div>
         </section>
 
-        <!-- 选项卡 4: 实时终端日志 -->
+        <!-- 选项卡 5: 抢购设置 (位于上新记录与实时终端中间) -->
+        <section class="tab-content" id="tab-purchase">
+            <!-- 顶部状态与快捷总控栏 -->
+            <div class="purchase-top-bar glass-panel">
+                <div class="top-bar-left">
+                    <span class="status-indicator-dot stopped" id="p-top-dot"></span>
+                    <div>
+                        <div class="top-title" id="p-top-login-title">尚未登录 Mandarake 账号</div>
+                        <div class="top-meta" id="p-top-login-meta">请先在下方登录或导入 Cookie，下单时才会保留有效会员会话</div>
+                    </div>
+                </div>
+                <div class="top-bar-actions">
+                    <span class="badge-tag payment-pill" id="p-top-payment-pill" title="当前默认免认证支付方式">
+                        <i class="fa-solid fa-credit-card"></i> 默认支付: 銀行振込
+                    </span>
+                    <label class="mode-badge-wrap" title="开启仿真演练时会在确认页安全拦截，不提交真实订单">
+                        <span class="switch-toggle">
+                            <input type="checkbox" id="p-top-dry-run-toggle" checked>
+                            <span class="slider"></span>
+                        </span>
+                        <span class="mode-label" id="p-top-dry-run-label">🛡️ Dry-Run 仿真演练</span>
+                    </label>
+                    <label class="mode-badge-wrap" title="自动抢购总开关">
+                        <span class="switch-toggle">
+                            <input type="checkbox" id="p-top-auto-buy-toggle">
+                            <span class="slider"></span>
+                        </span>
+                        <span class="mode-label" id="p-top-auto-buy-label">⚡ 自动抢购: 关</span>
+                    </label>
+                    <button class="btn btn-secondary btn-sm" id="btn-p-check-auth" title="在线验证当前登录 Cookie 是否仍有效">
+                        <i class="fa-solid fa-shield-halved"></i> 检测登录态
+                    </button>
+                    <button class="btn btn-secondary btn-sm" id="btn-p-view-cart" title="查看官网实时购物车内容">
+                        <i class="fa-solid fa-cart-shopping"></i> 官网购物车
+                    </button>
+                    <button class="btn btn-outline-danger btn-sm" id="btn-p-clear-cart" title="清空当前官网购物车内的残留商品">
+                        <i class="fa-solid fa-trash-can"></i> 清空购物车
+                    </button>
+                </div>
+            </div>
+
+            <div class="purchase-layout">
+                <!-- 左栏：Mandarake 登录系统 + 收货地址配置 -->
+                <div class="purchase-col-left">
+                    <!-- 1. Mandarake 会员登录系统 -->
+                    <div class="glass-panel purchase-card">
+                        <div class="card-head">
+                            <h3><i class="fa-solid fa-user-lock"></i> Mandarake 购买登录系统</h3>
+                            <span class="tag-status" id="p-auth-badge">未登录</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="login-tab-head">
+                                <button type="button" class="subtab-btn active" data-subtab="pane-login-cred">
+                                    <i class="fa-solid fa-key"></i> 账号密码登录
+                                </button>
+                                <button type="button" class="subtab-btn" data-subtab="pane-login-cookie">
+                                    <i class="fa-solid fa-cookie-bite"></i> 浏览器 / Cookie 导入
+                                </button>
+                            </div>
+
+                            <!-- 子标签1：账密登录 -->
+                            <div class="subtab-pane active" id="pane-login-cred">
+                                <div class="form-group">
+                                    <label>Mandarake 登录 ID / 邮箱：</label>
+                                    <input type="text" id="p-login-id" class="form-input" placeholder="输入 Mandarake 用户ID或注册邮箱" autocomplete="username">
+                                </div>
+                                <div class="form-group">
+                                    <label>登录密码：</label>
+                                    <div class="input-with-action">
+                                        <input type="password" id="p-login-pwd" class="form-input" placeholder="输入密码（仅在勾选保存凭据时落盘）" autocomplete="current-password">
+                                        <button type="button" class="btn-icon-inside" id="btn-p-toggle-pwd" title="显示/隐藏密码">
+                                            <i class="fa-regular fa-eye"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="form-group form-check-wrap">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="p-save-creds">
+                                        <span>记住账号凭据（不勾选则仅在内存中用于本次登录，不保存密码到本地）</span>
+                                    </label>
+                                </div>
+                                <p class="guide-text">
+                                    <i class="fa-solid fa-circle-info"></i> 若官网触发 Google reCAPTCHA v3 人机验证导致服务端直登被拒，请切换至「浏览器 / Cookie 导入」完成授权（不会绕过验证码）。
+                                </p>
+                                <button type="button" class="btn btn-primary btn-block" id="btn-p-login">
+                                    <i class="fa-solid fa-right-to-bracket"></i> 登录 Mandarake 账号
+                                </button>
+                            </div>
+
+                            <!-- 子标签2：浏览器与 Cookie 导入 -->
+                            <div class="subtab-pane" id="pane-login-cookie">
+                                <p class="guide-text">
+                                    Mandarake 前台以 <code>mandarake_sessionId</code> 与 <code>mandarake_userId</code> 维持登录。
+                                    操作步骤：① 打开官网登录页并完成登录 → ② 按 F12 在 Console 执行下方复制命令（或用 Cookie 插件导出）→ ③ 粘贴导入。
+                                </p>
+                                <div class="browser-actions-row">
+                                    <button type="button" class="btn btn-info btn-sm" id="btn-p-launch-browser">
+                                        <i class="fa-solid fa-arrow-up-right-from-square"></i> 打开官网登录页
+                                    </button>
+                                    <button type="button" class="btn btn-secondary btn-sm" id="btn-p-copy-cookie-cmd">
+                                        <i class="fa-regular fa-copy"></i> 复制 Console 提取命令
+                                    </button>
+                                </div>
+                                <div class="form-group mt-3">
+                                    <label>完整 Cookie 字符串或 JSON（支持 document.cookie / JSON）：</label>
+                                    <textarea id="p-cookie-raw" class="form-textarea" rows="3" placeholder="粘贴 mandarake_sessionId=...; mandarake_userId=... 或 Cookie JSON"></textarea>
+                                </div>
+                                <div class="form-row-2">
+                                    <div class="form-group">
+                                        <label>或直填 mandarake_sessionId：</label>
+                                        <input type="text" id="p-cookie-session-id" class="form-input" placeholder="可选，覆盖/单独填写">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>mandarake_userId：</label>
+                                        <input type="text" id="p-cookie-user-id" class="form-input" placeholder="可选，覆盖/单独填写">
+                                    </div>
+                                </div>
+                                <button type="button" class="btn btn-success btn-block" id="btn-p-import-cookies">
+                                    <i class="fa-solid fa-file-import"></i> 导入 Cookie 并在线验活
+                                </button>
+                            </div>
+
+                            <div class="btn-group-row mt-3" style="padding-top: 12px; border-top: 1px dashed var(--border-color);">
+                                <button type="button" class="btn btn-outline btn-sm" id="btn-p-refresh-auth">
+                                    <i class="fa-solid fa-rotate"></i> 刷新登录态
+                                </button>
+                                <button type="button" class="btn btn-outline-danger btn-sm" id="btn-p-logout">
+                                    <i class="fa-solid fa-right-from-bracket"></i> 退出登录
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 2. 收货地址与配送偏好设置 -->
+                    <div class="glass-panel purchase-card mt-3">
+                        <div class="card-head">
+                            <h3><i class="fa-solid fa-location-dot"></i> 收货地址与配送信息</h3>
+                            <label class="checkbox-label" style="font-size: 12px;" title="勾选后在下单结算页用下方信息覆盖非空字段；不勾选则直接使用会员账号已登记默认地址">
+                                <input type="checkbox" id="p-use-custom-address">
+                                <span>启用自定义地址覆盖</span>
+                            </label>
+                        </div>
+                        <div class="card-body">
+                            <p class="guide-text" id="p-addr-mode-hint">
+                                未启用自定义覆盖时，结账将自动沿用您在 Mandarake 官网会员中心已登记的默认收货地址（推荐，可减少表单校验报错）。启用后将用下方非空字段自动覆盖提交。
+                            </p>
+
+                            <div id="p-address-fields-wrap">
+                                <div class="form-row-2">
+                                    <div class="form-group">
+                                        <label>姓（漢字）：</label>
+                                        <input type="text" id="p-addr-last-name" class="form-input" placeholder="例: 山田">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>名（漢字）：</label>
+                                        <input type="text" id="p-addr-first-name" class="form-input" placeholder="例: 太郎">
+                                    </div>
+                                </div>
+
+                                <div class="form-row-2">
+                                    <div class="form-group">
+                                        <label>セイ（片仮名）：</label>
+                                        <input type="text" id="p-addr-last-kana" class="form-input" placeholder="例: ヤマダ">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>メイ（片仮名）：</label>
+                                        <input type="text" id="p-addr-first-kana" class="form-input" placeholder="例: タロウ">
+                                    </div>
+                                </div>
+
+                                <div class="form-row-2">
+                                    <div class="form-group">
+                                        <label>郵便番号：</label>
+                                        <input type="text" id="p-addr-postal" class="form-input" placeholder="例: 164-0001">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>都道府県：</label>
+                                        <select id="p-addr-prefecture" class="form-select">
+                                            <option value="">-- 保持账号默认 / 请选择 --</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label>市区町村・番地：</label>
+                                    <input type="text" id="p-addr-address1" class="form-input" placeholder="例: 中野区中野5-52-15">
+                                </div>
+
+                                <div class="form-group">
+                                    <label>建物名・部屋番号（选填）：</label>
+                                    <input type="text" id="p-addr-address2" class="form-input" placeholder="例: ブロードウェイマンション 301">
+                                </div>
+
+                                <div class="form-row-2">
+                                    <div class="form-group">
+                                        <label>電話番号：</label>
+                                        <input type="text" id="p-addr-phone" class="form-input" placeholder="例: 090-1234-5678">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>订单通知邮箱：</label>
+                                        <input type="email" id="p-addr-email" class="form-input" placeholder="留空沿用会员邮箱">
+                                    </div>
+                                </div>
+
+                                <div class="form-row-2">
+                                    <div class="form-group">
+                                        <label>期望配送方式：</label>
+                                        <select id="p-addr-delivery-method" class="form-select">
+                                            <option value="auto">自动匹配（推荐）</option>
+                                            <option value="宅配便">宅配便（佐川急便）</option>
+                                            <option value="メール便">メール便（如商品支持）</option>
+                                            <option value="店頭受取">店頭受取（门店自提）</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>期望配送时间段：</label>
+                                        <select id="p-addr-delivery-time" class="form-select">
+                                            <option value="none">不指定時間帯</option>
+                                            <option value="午前中">午前中</option>
+                                            <option value="12-14">12:00 ~ 14:00</option>
+                                            <option value="14-16">14:00 ~ 16:00</option>
+                                            <option value="16-18">16:00 ~ 18:00</option>
+                                            <option value="18-20">18:00 ~ 20:00</option>
+                                            <option value="19-21">19:00 ~ 21:00</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label>注文備考（选填）：</label>
+                                    <textarea id="p-addr-remarks" class="form-textarea" rows="2" placeholder="可选填写送货备注（例如宅配ボックス指定等）"></textarea>
+                                </div>
+                            </div>
+
+                            <button type="button" class="btn btn-primary btn-block mt-3" id="btn-save-purchase-address">
+                                <i class="fa-solid fa-floppy-disk"></i> 保存收货地址与配送偏好
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右栏：自动抢购配置、免认证支付方式选择与抢购历史 -->
+                <div class="purchase-col-right">
+                    <!-- 3. 自动抢购策略与默认购买支付方式 -->
+                    <div class="glass-panel purchase-card">
+                        <div class="card-head">
+                            <h3><i class="fa-solid fa-bolt"></i> 自动抢购策略 & 默认购买方式</h3>
+                            <span class="badge-tag stock" id="p-mode-badge">仿真演练保护中</span>
+                        </div>
+                        <div class="card-body">
+                            <!-- 模式与自动抢购总开关 -->
+                            <div class="purchase-switches-grid">
+                                <label class="switch-card">
+                                    <div>
+                                        <strong>🛡️ Dry-Run 仿真演练模式</strong>
+                                        <small>走通加购→填表→确认页，但坚决拦截最终提交并清空测试购物车，确保零误购</small>
+                                    </div>
+                                    <span class="switch-toggle">
+                                        <input type="checkbox" id="p-dry-run" checked>
+                                        <span class="slider"></span>
+                                    </span>
+                                </label>
+
+                                <label class="switch-card">
+                                    <div>
+                                        <strong>⚡ 启用监控命中自动抢购</strong>
+                                        <small>当监控巡检发现满足条件的新上架在库商品时，自动在后台极速下单</small>
+                                    </div>
+                                    <span class="switch-toggle">
+                                        <input type="checkbox" id="p-auto-buy-enabled">
+                                        <span class="slider"></span>
+                                    </span>
+                                </label>
+                            </div>
+
+                            <div class="form-row-2 mt-3">
+                                <div class="form-group">
+                                    <label>自动抢购触发范围：</label>
+                                    <select id="p-auto-buy-scope" class="form-select">
+                                        <option value="rule_enabled">仅勾选了「自动抢购」的监控规则</option>
+                                        <option value="all_rules">所有已启用的监控规则均自动抢购</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>自动抢购单件最高限价 (円，0=不限)：</label>
+                                    <div class="input-with-unit">
+                                        <input type="number" id="p-auto-buy-max-price" class="form-input" min="0" value="0">
+                                        <span class="unit">円</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-row-2">
+                                <div class="form-group">
+                                    <label>每日自动抢购单数上限 (风控熔断)：</label>
+                                    <div class="input-with-unit">
+                                        <input type="number" id="p-auto-buy-max-daily" class="form-input" min="1" max="100" value="5">
+                                        <span class="unit">单/天</span>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label>同商品演练防重冷却时间：</label>
+                                    <div class="input-with-unit">
+                                        <input type="number" id="p-auto-buy-cooldown" class="form-input" min="10" max="86400" value="3600">
+                                        <span class="unit">秒</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-row-2">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="p-auto-buy-on-restock" checked>
+                                    <span>已售罄商品补货复活时也触发自动抢购</span>
+                                </label>
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="p-quick-buy-skip-confirm">
+                                    <span>商品阅览「⚡ 一键抢购」免弹窗直接下单</span>
+                                </label>
+                            </div>
+
+                            <!-- 支付方式分析与选择 -->
+                            <div class="payment-section-header">
+                                <div>
+                                    <h4><i class="fa-solid fa-wallet"></i> 默认购买支付方式（仅保留下单无需即时认证即可成立订单的方式）</h4>
+                                    <p>经分析 Mandarake 官方通販规则，以下方式均可在订单确认页直接提交锁单，不会因实时 SMS/OAuth 弹窗中断：</p>
+                                </div>
+                            </div>
+
+                            <div class="payment-methods-grid" id="p-payment-methods-list">
+                                <!-- 由 JS 动态注入 INSTANT_PAYMENT_METHODS -->
+                            </div>
+
+                            <div class="form-group mt-3">
+                                <label>备选降级支付方式（当主选方式被特定商品/门店/离岛禁用时自动切换）：</label>
+                                <select id="p-fallback-payment" class="form-select">
+                                    <option value="none">不降级（主选不可用则中止下单）</option>
+                                    <!-- 由 JS 注入备选方式 -->
+                                </select>
+                            </div>
+
+                            <!-- 不支持免认证直下的支付方式分析说明 -->
+                            <details class="excluded-payments-box mt-3">
+                                <summary><i class="fa-solid fa-shield-cat"></i> 查看被排除的支付方式分析（为何不列入自动默认购买方式）</summary>
+                                <div class="excluded-payments-list" id="p-excluded-payments-list">
+                                    <!-- 由 JS 注入 EXCLUDED_PAYMENT_METHODS -->
+                                </div>
+                            </details>
+
+                            <button type="button" class="btn btn-primary btn-block mt-3" id="btn-save-purchase-settings">
+                                <i class="fa-solid fa-floppy-disk"></i> 保存自动抢购与默认支付设置
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 4. 抢购 / 一键下单历史记录 -->
+                    <div class="glass-panel purchase-card mt-3">
+                        <div class="card-head">
+                            <div>
+                                <h3><i class="fa-solid fa-receipt"></i> 抢购 / 下单历史记录</h3>
+                                <p class="subtitle" id="p-orders-stats">加载订单统计中...</p>
+                            </div>
+                            <div class="btn-group-row">
+                                <button type="button" class="btn btn-secondary btn-sm" id="btn-refresh-purchase-orders">
+                                    <i class="fa-solid fa-rotate"></i> 刷新
+                                </button>
+                                <button type="button" class="btn btn-outline-danger btn-sm" id="btn-clear-purchase-orders">
+                                    <i class="fa-solid fa-trash-can"></i> 清空
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <!-- 实盘抢购链路测试（终步前自动停止） -->
+                            <div class="live-test-bar">
+                                <div class="live-test-controls">
+                                    <input type="text" id="p-live-test-item-id" class="form-input" placeholder="可选：指定在库测试商品 ID 或官网链接（留空自动选在库商品）">
+                                    <button type="button" class="btn btn-warning" id="btn-p-test-live-checkout" title="使用当前真实登录账号、地址与默认支付方式跑通加购→填表→确认页，在最后一步提交下单前安全拦截并清理购物车">
+                                        <i class="fa-solid fa-flask-vial"></i> 实盘抢购测试（终步前停止）
+                                    </button>
+                                </div>
+                                <div class="live-test-note">
+                                    <i class="fa-solid fa-shield-halved"></i>
+                                    使用当前真实登录态、收货地址与默认支付方式走通「加购 → 结算填表 → 订单确认页」，强制在最后一步「注文する」提交前拦截并清理购物车，绝不产生真实订单。
+                                </div>
+                                <div class="live-test-result" id="p-live-test-result" style="display: none;"></div>
+                            </div>
+
+                            <div class="orders-history-list" id="purchase-orders-list">
+                                <div class="empty-orders-tip">暂无抢购记录，前往【商品阅览】点击「⚡ 一键抢购」或开启自动抢购即可体验！</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 选项卡 6: 实时终端日志 -->
         <section class="tab-content" id="tab-terminal">
             <div class="terminal-panel glass-panel">
                 <div class="terminal-header">
@@ -787,7 +1192,12 @@
                     <input type="number" id="modal-rule-max-price" class="form-input" placeholder="例如: 50000">
                 </div>
 
-                
+                <div class="form-group form-check-wrap">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="modal-rule-auto-buy">
+                        <span>⚡ 命中在库新商品时自动触发抢购（需同时在【抢购设置】开启自动抢购总开关）</span>
+                    </label>
+                </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" id="btn-cancel-rule-modal">取消</button>
@@ -798,11 +1208,54 @@
         </div>
     </div>
 
+    <!-- 模态弹窗：商品阅览一键抢购确认 -->
+    <div class="modal-overlay" id="quick-buy-modal">
+        <div class="modal-card glass-panel" style="width: 520px;">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-bolt" style="color: var(--brand-primary);"></i> 一键抢购确认</h3>
+                <button class="modal-close" id="btn-close-quick-buy">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="order-preview-card">
+                    <img id="qb-item-img" class="order-img" src="" alt="商品缩略图">
+                    <div class="order-info">
+                        <h4 id="qb-item-title">商品标题</h4>
+                        <div class="price-line">
+                            <span class="price-val" id="qb-item-price">0円</span>
+                            <span class="shop-badge" id="qb-item-shop">まんだらけ</span>
+                        </div>
+                        <div class="order-meta-info" id="qb-item-id">ID: -</div>
+                    </div>
+                </div>
+
+                <div class="qb-status-banners">
+                    <div class="qb-banner" id="qb-auth-banner">登录态检测中...</div>
+                    <div class="qb-banner" id="qb-mode-banner">模式检测中...</div>
+                </div>
+
+                <div class="form-group">
+                    <label>本次下单支付方式（免认证即刻成立订单）：</label>
+                    <select id="qb-payment-select" class="form-select"></select>
+                </div>
+
+                <div class="quick-buy-summary" id="qb-address-summary">
+                    收货地址：会员账号默认登记地址
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-cancel-quick-buy">取消</button>
+                <button class="btn btn-primary" id="btn-confirm-quick-buy">
+                    <i class="fa-solid fa-bolt"></i> 立即抢购下单
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- 移动端悬浮回到顶部按钮 -->
     <button class="back-to-top-btn" id="btn-back-to-top" title="回到顶部" aria-label="回到顶部">
         <i class="fa-solid fa-arrow-up"></i>
     </button>
 
-    <script src="/static/js/app.js?v=3"></script>
+    <script src="/static/js/app.js?v=6"></script>
 </body>
 </html>

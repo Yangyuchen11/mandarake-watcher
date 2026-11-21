@@ -1944,19 +1944,33 @@ input:checked + .slider:before {
     
     .tab-btn {
         flex: 1;
+        min-width: 0;
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
         gap: 3px;
         padding: 6px 2px;
-        font-size: 10px;
+        font-size: 9.5px;
         font-weight: 500;
         color: var(--text-muted);
         border-radius: 8px;
         border: none;
         background: transparent;
         touch-action: manipulation;
+        white-space: nowrap;
+        position: relative;
+    }
+
+    .tab-btn .tab-badge {
+        position: absolute;
+        top: 2px;
+        right: 4px;
+        margin-left: 0;
+        min-width: 15px;
+        height: 15px;
+        font-size: 9px;
+        padding: 0 4px;
     }
     
     .tab-btn i {
@@ -3030,4 +3044,619 @@ input:checked + .slider:before {
 }
 .toast-item.info .toast-icon {
     color: #3b82f6;
+}
+
+/* ==========================================================================
+   商品卡片一键抢购操作栏 & 顶部抢购药丸
+   ========================================================================== */
+.auth-indicator.purchase-pill {
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.auth-indicator.purchase-pill:hover {
+    border-color: var(--brand-primary);
+    background: rgba(255, 87, 34, 0.12);
+}
+
+.card-actions-bar {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.btn-card-quick-buy {
+    flex: 2;
+    background: linear-gradient(135deg, #ff7043, #ff5722);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 7px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    transition: var(--transition);
+}
+
+.btn-card-quick-buy:hover:not(:disabled) {
+    filter: brightness(1.1);
+    box-shadow: 0 4px 12px var(--brand-glow);
+}
+
+.btn-card-quick-buy:disabled {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-muted);
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+.btn-card-open-site {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.07);
+    color: var(--text-secondary);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-sm);
+    padding: 7px 8px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    transition: var(--transition);
+}
+
+.btn-card-open-site:hover {
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+}
+
+/* ==========================================================================
+   抢购设置面板 (Tab Purchase)
+   ========================================================================== */
+.purchase-top-bar {
+    padding: 14px 20px;
+    margin-bottom: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 14px;
+}
+
+.badge-tag.payment-pill {
+    background: rgba(59, 130, 246, 0.16);
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    color: #93c5fd;
+    font-size: 12px;
+    padding: 5px 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.purchase-layout {
+    display: grid;
+    grid-template-columns: 490px 1fr;
+    gap: 20px;
+    align-items: start;
+}
+
+.purchase-card {
+    padding: 18px 20px;
+}
+
+.purchase-card .card-head .subtitle {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+.purchase-card .form-group {
+    margin-bottom: 12px;
+}
+
+.purchase-card .form-group label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 5px;
+    font-weight: 500;
+}
+
+.purchase-card .form-input,
+.purchase-card .form-select,
+.purchase-card .form-textarea {
+    width: 100%;
+}
+
+.input-with-action {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.input-with-action .form-input {
+    padding-right: 36px;
+}
+
+.btn-icon-inside {
+    position: absolute;
+    right: 8px;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px 6px;
+}
+
+.btn-icon-inside:hover {
+    color: #fff;
+}
+
+.browser-actions-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.address-fields-dimmed {
+    opacity: 0.72;
+}
+
+.purchase-switches-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.switch-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    cursor: pointer;
+}
+
+.switch-card strong {
+    display: block;
+    font-size: 13px;
+    color: #fff;
+    margin-bottom: 3px;
+}
+
+.switch-card small {
+    display: block;
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+.payment-section-header {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px dashed rgba(255, 255, 255, 0.12);
+}
+
+.payment-section-header h4 {
+    font-size: 14px;
+    color: #fff;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.payment-section-header p {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+
+.payment-methods-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 10px;
+}
+
+.payment-option-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: rgba(14, 18, 28, 0.7);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: var(--transition);
+    position: relative;
+}
+
+.payment-option-card:hover {
+    border-color: rgba(255, 87, 34, 0.45);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.payment-option-card.selected {
+    border-color: var(--brand-primary);
+    background: rgba(255, 87, 34, 0.1);
+    box-shadow: 0 0 0 1px var(--brand-glow);
+}
+
+.payment-option-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.payment-option-radio-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+}
+
+.payment-option-badge {
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: var(--radius-full);
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    white-space: nowrap;
+}
+
+.payment-option-summary {
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+}
+
+.payment-option-caveat {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+.excluded-payments-box {
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px dashed rgba(255, 255, 255, 0.12);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.excluded-payments-box summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: #fbbf24;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.excluded-payments-list {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.excluded-payment-row {
+    background: rgba(255, 255, 255, 0.03);
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--warning);
+}
+
+.excluded-payment-row strong {
+    color: #fff;
+    font-size: 12px;
+    display: block;
+    margin-bottom: 2px;
+}
+
+.excluded-payment-row span {
+    color: var(--text-muted);
+    font-size: 11.5px;
+}
+
+/* 实盘链路终步前测试栏 */
+.live-test-bar {
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.28);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    margin-bottom: 14px;
+}
+
+.live-test-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.live-test-controls .form-input {
+    flex: 1;
+    min-width: 220px;
+}
+
+.live-test-controls .btn {
+    white-space: nowrap;
+}
+
+.live-test-note {
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    margin-top: 8px;
+    line-height: 1.45;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+}
+
+.live-test-note i {
+    color: #fbbf24;
+    margin-top: 2px;
+}
+
+.live-test-result {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: rgba(10, 14, 23, 0.78);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+}
+
+.live-test-result.ok {
+    border-color: rgba(16, 185, 129, 0.4);
+}
+
+.live-test-result.err {
+    border-color: rgba(239, 68, 68, 0.45);
+}
+
+.live-test-summary {
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #fff;
+    line-height: 1.45;
+}
+
+.live-test-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.live-test-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+}
+
+.live-test-step.ok i { color: #34d399; }
+.live-test-step.fail i { color: #f87171; }
+
+/* 抢购订单历史列表 */
+.orders-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 520px;
+    overflow-y: auto;
+}
+
+.empty-orders-tip {
+    text-align: center;
+    padding: 36px 16px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.order-history-item {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    background: rgba(14, 18, 28, 0.72);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 12px;
+}
+
+.order-history-thumb {
+    width: 64px;
+    height: 64px;
+    border-radius: var(--radius-sm);
+    object-fit: cover;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.order-history-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.order-history-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 4px;
+}
+
+.order-history-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+    text-decoration: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.order-history-title:hover {
+    color: var(--brand-primary);
+}
+
+.order-status-pill {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    white-space: nowrap;
+}
+
+.order-status-pill.status-success {
+    background: rgba(16, 185, 129, 0.2);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.order-status-pill.status-dry-run {
+    background: rgba(59, 130, 246, 0.2);
+    color: #93c5fd;
+    border: 1px solid rgba(59, 130, 246, 0.4);
+}
+
+.order-status-pill.status-need-auth {
+    background: rgba(245, 158, 11, 0.2);
+    color: #fcd34d;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.order-status-pill.status-failed {
+    background: rgba(239, 68, 68, 0.2);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.order-history-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+
+.order-history-msg {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    line-height: 1.45;
+    word-break: break-word;
+}
+
+.order-history-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+/* 一键抢购弹窗状态条 */
+.qb-status-banners {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.qb-banner {
+    padding: 9px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+}
+
+.qb-banner.ok {
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(16, 185, 129, 0.35);
+    color: #6ee7b7;
+}
+
+.qb-banner.warn {
+    background: rgba(245, 158, 11, 0.14);
+    border-color: rgba(245, 158, 11, 0.38);
+    color: #fde68a;
+}
+
+.qb-banner.danger {
+    background: rgba(239, 68, 68, 0.14);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+}
+
+.quick-buy-summary {
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: rgba(0, 0, 0, 0.25);
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    line-height: 1.5;
+}
+
+.badge-autobuy-on {
+    background: rgba(255, 87, 34, 0.2);
+    color: #ff8a65;
+    border: 1px solid rgba(255, 87, 34, 0.45);
+}
+
+@media (max-width: 1120px) {
+    .purchase-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 768px) {
+    .purchase-top-bar {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 12px;
+    }
+
+    .purchase-switches-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .payment-methods-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .order-history-item {
+        flex-direction: column;
+    }
+
+    .order-history-actions {
+        flex-direction: row;
+        width: 100%;
+    }
 }

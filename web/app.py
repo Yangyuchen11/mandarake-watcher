@@ -4,14 +4,16 @@ Mandarake Web 控制台与 REST / SSE API 服务
 """
 import os
 import re
+import copy
 import json
 import queue
 import logging
 import time
 import threading
 import smtplib
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from flask import Flask, render_template, jsonify, request, Response
+from werkzeug.exceptions import HTTPException
 
 from core.categories import category_mgr, ROOT_DOLL_CODE
 from core.scraper import MandarakeScraper
@@ -20,6 +22,12 @@ from core.archiver import archiver_engine
 from core.monitor import MandarakeMonitor
 from core.scheduler import MandarakeScheduler
 from core.terminal import terminal_mgr
+from hooks.auto_order import (
+    auto_order_engine,
+    INSTANT_PAYMENT_METHODS,
+    EXCLUDED_PAYMENT_METHODS,
+    JP_PREFECTURES,
+)
 from notifiers.manager import NotificationManager
 
 logger = logging.getLogger("mandarake.web")
@@ -28,8 +36,15 @@ logger = logging.getLogger("mandarake.web")
 def create_app(
     monitor: MandarakeMonitor,
     scheduler: MandarakeScheduler,
-    notifier_mgr: NotificationManager
+    notifier_mgr: NotificationManager,
+    auto_order: Optional[Any] = None
 ) -> Flask:
+    auto_order = auto_order or getattr(monitor, "auto_order", None) or auto_order_engine
+    if getattr(monitor, "auto_order", None) is None:
+        monitor.auto_order = auto_order
+    auto_order.reload_config(monitor.config)
+    order_db = getattr(auto_order, "db", archive_db)
+
     template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "templates"))
     static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static"))
 
@@ -40,6 +55,31 @@ def create_app(
 
     # 挂载终端日志拦截器
     terminal_mgr.install()
+
+    @app.errorhandler(HTTPException)
+    def handle_http_exception(exc: HTTPException):
+        if request.path.startswith("/api/"):
+            return jsonify({
+                "success": False,
+                "status": "FAILED",
+                "code": exc.code,
+                "message": f"API 请求失败 (HTTP {exc.code}): {exc.description}",
+            }), exc.code
+        return exc
+
+    @app.errorhandler(Exception)
+    def handle_unexpected_exception(exc: Exception):
+        if isinstance(exc, HTTPException):
+            return handle_http_exception(exc)
+        if request.path.startswith("/api/"):
+            logger.exception(f"API 未捕获异常 [{request.method} {request.path}]: {exc}")
+            return jsonify({
+                "success": False,
+                "status": "FAILED",
+                "code": 500,
+                "message": f"服务端内部异常: {exc}",
+            }), 500
+        raise exc
 
     @app.route("/")
     def index():
@@ -122,12 +162,14 @@ def create_app(
         stats = archive_db.get_stats()
         crawler_status = archiver_engine.get_status()
         sched_status = scheduler.get_status()
+        purchase_status = auto_order.get_status_summary()
         return jsonify({
             "success": True,
             "status": "ok",
             "stats": stats,
             "crawler": crawler_status,
             "scheduler": sched_status,
+            "purchase": purchase_status,
             "seen_count": len(monitor.seen_ids)
         })
 
@@ -318,6 +360,9 @@ def create_app(
             if "enabled" not in r:
                 r["enabled"] = True
                 modified = True
+            if "auto_buy" not in r:
+                r["auto_buy"] = False
+                modified = True
             if "notify_instant_soldout" not in r:
                 r["notify_instant_soldout"] = True
                 modified = True
@@ -385,6 +430,10 @@ def create_app(
                 normalized_rule["enabled"] = bool(rule_data["enabled"])
             else:
                 normalized_rule["enabled"] = bool(prev_rule.get("enabled", True))
+            if "auto_buy" in rule_data and rule_data.get("auto_buy") is not None:
+                normalized_rule["auto_buy"] = bool(rule_data["auto_buy"])
+            else:
+                normalized_rule["auto_buy"] = bool(prev_rule.get("auto_buy", False))
             if "notify_instant_soldout" in rule_data and rule_data.get("notify_instant_soldout") is not None:
                 normalized_rule["notify_instant_soldout"] = bool(rule_data["notify_instant_soldout"])
             else:
@@ -392,6 +441,7 @@ def create_app(
             rules[existing_idx] = normalized_rule
         else:
             normalized_rule["enabled"] = bool(rule_data.get("enabled", True)) if rule_data.get("enabled") is not None else True
+            normalized_rule["auto_buy"] = bool(rule_data.get("auto_buy", False)) if rule_data.get("auto_buy") is not None else False
             normalized_rule["notify_instant_soldout"] = (
                 bool(rule_data.get("notify_instant_soldout", True))
                 if rule_data.get("notify_instant_soldout") is not None
@@ -417,6 +467,8 @@ def create_app(
             if (rule_id and rule_id not in ("undefined", "null", "") and str(r.get("id", "")) == rule_id) or \
                (rule_name and str(r.get("name", "")) == rule_name):
                 r["enabled"] = bool(enabled)
+                if "auto_buy" in body and body.get("auto_buy") is not None:
+                    r["auto_buy"] = bool(body["auto_buy"])
                 found = True
                 break
 
@@ -424,6 +476,28 @@ def create_app(
             monitor.config["rules"] = rules
             save_config_file()
             return jsonify({"success": True, "message": "规则状态已更新", "rules": rules})
+        return jsonify({"success": False, "message": "未找到指定规则", "rules": rules}), 404
+
+    @app.route("/api/monitor/rules/toggle_auto_buy", methods=["POST"])
+    def api_toggle_rule_auto_buy():
+        body = request.get_json(silent=True) or {}
+        rule_id = str(body.get("id") or "").strip()
+        rule_name = str(body.get("name") or "").strip()
+        auto_buy = bool(body.get("auto_buy", False))
+
+        rules = monitor.config.get("rules", [])
+        found = False
+        for r in rules:
+            if (rule_id and rule_id not in ("undefined", "null", "") and str(r.get("id", "")) == rule_id) or \
+               (rule_name and str(r.get("name", "")) == rule_name):
+                r["auto_buy"] = auto_buy
+                found = True
+                break
+
+        if found:
+            monitor.config["rules"] = rules
+            save_config_file()
+            return jsonify({"success": True, "message": "规则自动抢购开关已更新", "rules": rules})
         return jsonify({"success": False, "message": "未找到指定规则", "rules": rules}), 404
 
     @app.route("/api/monitor/rules/delete", methods=["POST"])
@@ -525,8 +599,189 @@ def create_app(
         except Exception as e:
             logger.warning(f"广播调度状态事件异常: {e}")
 
+    def on_order_updated(order_data):
+        try:
+            broadcast_sse_event({
+                "type": "order_updated",
+                "order": order_data
+            })
+        except Exception as e:
+            logger.warning(f"广播订单事件异常: {e}")
+
+    def on_purchase_status(p_status):
+        try:
+            broadcast_sse_event({
+                "type": "purchase_status",
+                "data": p_status
+            })
+        except Exception as e:
+            logger.warning(f"广播抢购状态事件异常: {e}")
+
     monitor.add_record_listener(on_new_monitor_records)
     scheduler.add_status_listener(on_scheduler_status)
+    auto_order.add_order_listener(on_order_updated)
+    auto_order.add_status_listener(on_purchase_status)
+
+    # --- 自动抢购、一键购买与账号/地址/支付设置接口 ---
+
+    @app.route("/api/purchase/config", methods=["GET", "POST"])
+    def api_purchase_config():
+        if request.method == "POST":
+            body = request.get_json(silent=True) or {}
+            updated = auto_order.update_config(body, root_config=monitor.config, persist=True)
+            return jsonify({
+                "success": True,
+                "message": "抢购与购买设置已保存并生效！",
+                "config": updated,
+                "status": auto_order.get_status_summary(),
+            })
+
+        return jsonify({
+            "success": True,
+            "config": auto_order.get_config(mask_password=True),
+            "status": auto_order.get_status_summary(),
+            "payment_methods": INSTANT_PAYMENT_METHODS,
+            "excluded_payment_methods": EXCLUDED_PAYMENT_METHODS,
+            "prefectures": JP_PREFECTURES,
+            "order_stats": order_db.get_order_stats(),
+        })
+
+    @app.route("/api/purchase/auth/login", methods=["POST"])
+    def api_purchase_auth_login():
+        body = request.get_json(silent=True) or {}
+        res = auto_order.login_with_credentials(
+            username=body.get("username", ""),
+            password=body.get("password", ""),
+            save_credentials=body.get("save_credentials"),
+            root_config=monitor.config,
+        )
+        res["status"] = auto_order.get_status_summary()
+        return jsonify(res)
+
+    @app.route("/api/purchase/auth/import_cookies", methods=["POST"])
+    def api_purchase_auth_import_cookies():
+        body = request.get_json(silent=True) or {}
+        res = auto_order.import_cookies(
+            cookie_input=body.get("cookie_str", ""),
+            session_id=body.get("session_id", ""),
+            user_id=body.get("user_id", ""),
+            verify_online=bool(body.get("verify_online", True)),
+        )
+        res["status"] = auto_order.get_status_summary()
+        return jsonify(res)
+
+    @app.route("/api/purchase/auth/launch_browser", methods=["POST"])
+    def api_purchase_auth_launch_browser():
+        res = auto_order.launch_browser_login()
+        return jsonify(res)
+
+    @app.route("/api/purchase/auth/check", methods=["POST", "GET"])
+    def api_purchase_auth_check():
+        res = auto_order.check_login_status(verify_online=True)
+        status_summary = auto_order.get_status_summary()
+        broadcast_sse_event({"type": "purchase_status", "data": status_summary})
+        res["status"] = status_summary
+        return jsonify(res)
+
+    @app.route("/api/purchase/auth/logout", methods=["POST"])
+    def api_purchase_auth_logout():
+        res = auto_order.clear_session()
+        res["status"] = auto_order.get_status_summary()
+        return jsonify(res)
+
+    @app.route("/api/purchase/cart", methods=["GET"])
+    def api_purchase_cart():
+        return jsonify(auto_order.get_cart_items())
+
+    @app.route("/api/purchase/cart/clear", methods=["POST"])
+    def api_purchase_cart_clear():
+        return jsonify(auto_order.clear_cart())
+
+    @app.route("/api/purchase/buy", methods=["POST"])
+    def api_purchase_buy():
+        try:
+            body = request.get_json(silent=True) or {}
+            item_id = str(body.get("item_id") or "").strip()
+            if not item_id:
+                return jsonify({"success": False, "status": "FAILED", "message": "缺少商品 ID (item_id)"}), 400
+
+            dry_run_val = body.get("dry_run") if "dry_run" in body else None
+            payment_val = str(body.get("payment_method") or "").strip() or None
+            try:
+                price_val = int(body.get("price") or 0)
+            except (ValueError, TypeError):
+                price_val = 0
+
+            res = auto_order.order_item(
+                item_id=item_id,
+                title=str(body.get("title") or ""),
+                price=price_val,
+                img_url=str(body.get("img_url") or ""),
+                shop=str(body.get("shop") or ""),
+                dry_run=dry_run_val,
+                payment_method=payment_val,
+                trigger_type="manual",
+            )
+            res["purchase"] = auto_order.get_status_summary()
+            return jsonify(res)
+        except Exception as e:
+            logger.exception(f"一键抢购接口异常: {e}")
+            return jsonify({
+                "success": False,
+                "status": "FAILED",
+                "message": f"一键抢购服务内部异常: {e}",
+                "steps": [],
+            }), 500
+
+    @app.route("/api/purchase/test_live_checkout", methods=["POST"])
+    def api_purchase_test_live_checkout():
+        try:
+            body = request.get_json(silent=True) or {}
+            item_input = str(body.get("item_id") or body.get("item_input") or "").strip()
+            payment_val = str(body.get("payment_method") or "").strip() or None
+            res = auto_order.test_live_checkout(
+                item_input=item_input,
+                payment_method=payment_val,
+                scraper=getattr(monitor, "scraper", None),
+            )
+            res["purchase"] = auto_order.get_status_summary()
+            return jsonify(res)
+        except Exception as e:
+            logger.exception(f"实盘抢购链路测试接口异常: {e}")
+            return jsonify({
+                "success": False,
+                "status": "FAILED",
+                "message": f"实盘链路测试服务异常: {e}",
+                "steps": [],
+            }), 500
+
+    @app.route("/api/purchase/orders", methods=["GET"])
+    def api_purchase_orders():
+        limit = max(1, min(200, request.args.get("limit", 50, type=int)))
+        offset = max(0, request.args.get("offset", 0, type=int))
+        orders = order_db.query_orders(limit=limit, offset=offset)
+        stats = order_db.get_order_stats()
+        return jsonify({"success": True, "orders": orders, "stats": stats})
+
+    @app.route("/api/purchase/orders/<order_id>", methods=["DELETE", "POST"])
+    def api_purchase_delete_order(order_id: str):
+        ok = order_db.delete_order(order_id)
+        return jsonify({
+            "success": ok,
+            "message": "订单记录已删除" if ok else "删除订单记录失败",
+            "stats": order_db.get_order_stats(),
+        })
+
+    @app.route("/api/purchase/orders/clear", methods=["POST"])
+    def api_purchase_clear_orders():
+        ok = order_db.clear_orders()
+        if ok:
+            broadcast_sse_event({"type": "orders_cleared"})
+        return jsonify({
+            "success": ok,
+            "message": "已清空全部抢购/下单历史记录" if ok else "清空失败",
+            "stats": order_db.get_order_stats(),
+        })
 
     # --- 上新提醒记录接口 ---
 
@@ -630,13 +885,58 @@ def create_app(
             "is_custom": is_custom
         })
 
+    def _sanitize_schedule_update(raw_sched: Dict[str, Any]) -> Dict[str, Any]:
+        cleaned = dict(raw_sched)
+        for float_key, default_val in [
+            ("interval_seconds", 15.0),
+            ("burst_interval_seconds", 3.0),
+            ("retry_delay", 2.0),
+            ("burst_retry_delay", 1.0),
+        ]:
+            if float_key in cleaned:
+                try:
+                    cleaned[float_key] = round(max(0.1, float(cleaned[float_key])), 2)
+                except (ValueError, TypeError):
+                    cleaned[float_key] = default_val
+        if "retry_count" in cleaned:
+            try:
+                cleaned["retry_count"] = max(0, int(cleaned["retry_count"]))
+            except (ValueError, TypeError):
+                cleaned["retry_count"] = 3
+        if "burst_duration_minutes" in cleaned:
+            try:
+                cleaned["burst_duration_minutes"] = max(1, int(cleaned["burst_duration_minutes"]))
+            except (ValueError, TypeError):
+                cleaned["burst_duration_minutes"] = 3
+        if "monitor_disp_count" in cleaned:
+            try:
+                cleaned["monitor_disp_count"] = max(48, min(240, int(cleaned["monitor_disp_count"])))
+            except (ValueError, TypeError):
+                cleaned["monitor_disp_count"] = 48
+        return cleaned
+
+    def _masked_config() -> Dict[str, Any]:
+        cfg_copy = copy.deepcopy(monitor.config)
+        if isinstance(cfg_copy.get("purchase"), dict):
+            cfg_copy["purchase"]["has_saved_password"] = bool(cfg_copy["purchase"].get("password"))
+            cfg_copy["purchase"]["password"] = ""
+        return cfg_copy
+
     @app.route("/api/config", methods=["GET", "POST"])
     def api_config():
         if request.method == "POST":
             new_cfg = request.get_json(silent=True) or {}
             # 递归/字段合并保存配置
             for k, v in new_cfg.items():
-                if isinstance(v, dict) and isinstance(monitor.config.get(k), dict):
+                if k == "schedule" and isinstance(v, dict):
+                    sanitized = _sanitize_schedule_update(v)
+                    if isinstance(monitor.config.get("schedule"), dict):
+                        monitor.config["schedule"].update(sanitized)
+                    else:
+                        monitor.config["schedule"] = sanitized
+                elif k == "purchase" and isinstance(v, dict):
+                    auto_order.update_config(v, root_config=monitor.config, persist=False)
+                elif isinstance(v, dict) and isinstance(monitor.config.get(k), dict):
                     monitor.config[k].update(v)
                 else:
                     monitor.config[k] = v
@@ -645,12 +945,12 @@ def create_app(
             if "schedule" in new_cfg:
                 scheduler.wake()
                 broadcast_sse_event({"type": "scheduler_status", "data": scheduler.get_status()})
-            return jsonify({"success": True, "config": monitor.config})
+            return jsonify({"success": True, "config": _masked_config()})
 
         rules = monitor.config.get("rules", [])
         if normalize_rules(rules):
             save_config_file()
-        return jsonify({"success": True, "config": monitor.config})
+        return jsonify({"success": True, "config": _masked_config()})
 
     # --- 实时 SSE 广播流 ---
 

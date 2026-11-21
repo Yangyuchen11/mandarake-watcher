@@ -321,20 +321,21 @@ class MandarakeScheduler:
                     self.trigger_burst(reason="auto", wake=False)
                     self._emit_status()
 
-                # 6. 根据模式确定精确睡眠间隔（扣除本轮抓取耗时）
+                # 6. 根据模式确定精确睡眠间隔（扣除本轮抓取耗时，支持最低 0.1s 高频轮询）
                 if self.in_burst_mode:
                     burst_interval = float(sched_cfg.get("burst_interval_seconds", 3.0))
-                    target_interval = max(0.5, burst_interval)
-                    sleep_interval = max(0.5, target_interval - cycle_elapsed)
+                    target_interval = max(0.1, burst_interval)
+                    sleep_interval = max(0.1, target_interval - cycle_elapsed)
                 else:
-                    target_interval = max(3.0, float(sched_cfg.get("interval_seconds", 15)))
-                    sleep_interval = max(0.5, target_interval - cycle_elapsed)
+                    target_interval = max(0.1, float(sched_cfg.get("interval_seconds", 15)))
+                    sleep_interval = max(0.1, target_interval - cycle_elapsed)
                     if not matches:
                         cache_tag = "缓存穿透" if getattr(self.monitor, "last_bypass_cache", True) else "普通请求"
+                        sleep_str = f"{sleep_interval:.2f}" if sleep_interval < 1.0 else f"{sleep_interval:.1f}"
                         logger.info(
                             f"⚡ [监控巡检] 第 {self.monitor.total_checks} 轮扫描完成 "
                             f"(耗时 {getattr(self.monitor, 'last_scan_ms', 0)}ms | {cache_tag})，"
-                            f"暂无新上架商品 (下次扫描在 {sleep_interval:.1f} 秒后)"
+                            f"暂无新上架商品 (下次扫描在 {sleep_str} 秒后)"
                         )
 
                 # 睡眠可被 pause()、stop()、trigger_burst()、wake() 立即中断

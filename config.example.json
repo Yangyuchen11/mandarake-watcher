@@ -19,7 +19,8 @@
       "exclude_keywords": [],
       "max_price": 0,
       "enabled": false,
-      "id": "rule_root_doll"
+      "id": "rule_root_doll",
+      "auto_buy": false
     },
     {
       "name": "ボークス汎用",
@@ -31,9 +32,40 @@
       "match_mode": "or",
       "max_price": 0,
       "enabled": true,
-      "id": "rule_1793075524"
+      "id": "rule_1793075524",
+      "auto_buy": false
     }
   ],
+  "purchase": {
+    "username": "",
+    "save_credentials": false,
+    "dry_run": true,
+    "auto_buy_enabled": false,
+    "auto_buy_scope": "rule_enabled",
+    "auto_buy_on_restock": true,
+    "auto_buy_max_price": 0,
+    "auto_buy_max_orders_per_day": 5,
+    "auto_buy_cooldown_seconds": 3600,
+    "quick_buy_skip_confirm": false,
+    "default_payment_method": "bank",
+    "fallback_payment_method": "cod",
+    "use_custom_address": false,
+    "address": {
+      "last_name": "",
+      "first_name": "",
+      "last_name_kana": "",
+      "first_name_kana": "",
+      "postal_code": "",
+      "prefecture": "",
+      "address1": "",
+      "address2": "",
+      "phone": "",
+      "email": "",
+      "delivery_method": "auto",
+      "delivery_time": "none",
+      "remarks": ""
+    }
+  },
   "notifiers": {
     "discord": {
       "enabled": false,

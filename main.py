@@ -22,6 +22,7 @@ from core.archiver import archiver_engine
 from core.monitor import MandarakeMonitor
 from core.scheduler import MandarakeScheduler
 from core.terminal import terminal_mgr
+from hooks.auto_order import auto_order_engine
 from notifiers.manager import NotificationManager
 from web.app import create_app
 from core.config_helper import load_config, get_config_path
@@ -69,9 +70,10 @@ def main():
     # 尽早挂载终端日志拦截器，以捕获系统初始化全量日志
     terminal_mgr.install()
 
-    # 初始化通知中心与监控调度器
+    # 初始化通知中心、自动抢购引擎与监控调度器
     notifier_mgr = NotificationManager(config)
-    monitor = MandarakeMonitor(config, notifier_mgr)
+    auto_order_engine.reload_config(config)
+    monitor = MandarakeMonitor(config, notifier_mgr, auto_order=auto_order_engine)
     scheduler = MandarakeScheduler(monitor)
 
     # 1. 单次检测模式
@@ -119,7 +121,7 @@ def main():
     # 启动后台监控调度
     scheduler.start()
 
-    app = create_app(monitor, scheduler, notifier_mgr)
+    app = create_app(monitor, scheduler, notifier_mgr, auto_order=auto_order_engine)
 
     # 自动打开浏览器
     if not args.no_browser and not os.environ.get("IN_DOCKER") and not os.environ.get("NO_BROWSER"):

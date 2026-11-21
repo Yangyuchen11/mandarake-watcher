@@ -37,7 +37,35 @@ const state = {
         ruleName: "",
         unreadCount: 0
     },
+
+    // 自动抢购与一键购买状态
+    purchase: {
+        isLoggedIn: false,
+        accountName: "",
+        dryRun: true,
+        autoBuyEnabled: false,
+        autoBuyScope: "rule_enabled",
+        autoBuyOnRestock: true,
+        autoBuyMaxPrice: 0,
+        autoBuyMaxOrdersPerDay: 5,
+        autoBuyCooldownSeconds: 3600,
+        quickBuySkipConfirm: false,
+        defaultPaymentMethod: "bank",
+        defaultPaymentLabel: "銀行振込（银行转账 · 推荐）",
+        fallbackPaymentMethod: "cod",
+        useCustomAddress: false,
+        address: {},
+        paymentMethods: [],
+        excludedPaymentMethods: [],
+        prefectures: [],
+        unreadOrders: 0,
+        pendingItem: null,
+        configLoaded: false,
+    },
 };
+
+// 默认本地兜底缩略图（避免官网远端图标 302 导致裂图黑块）
+const DEFAULT_ITEM_THUMB = "/static/icon-192.png";
 
 // 预设关键词本地持久化 Key 与内置默认娃娃特征标签
 const PRESET_STORAGE_KEY = "mandarake_preset_keywords";
@@ -57,14 +85,17 @@ document.addEventListener("DOMContentLoaded", () => {
     loadStats();
     loadMonitorConfig();
     initMonitorRecords();
+    initPurchaseModule();
+    loadPurchaseConfig();
     initEventListeners();
     initMobileInteractions();
     
     // 定时轮询统计与状态 (每 10 秒)
     setInterval(() => {
         loadStats();
-        if (state.activeTab === "tab-orders") {
-                }
+        if (state.activeTab === "tab-purchase") {
+            loadPurchaseOrders();
+        }
     }, 10000);
 });
 
@@ -90,6 +121,7 @@ function initTabs() {
                 "tab-crawler": "分类爬虫 - Mandarake 【ドール】 专区",
                 "tab-monitor": "上新监控 - Mandarake 【ドール】 专区",
                 "tab-monitor-records": "上新记录 - Mandarake 【ドール】 专区",
+                "tab-purchase": "抢购设置 - Mandarake 【ドール】 专区",
                 "tab-terminal": "实时终端 - Mandarake 【ドール】 专区"
             };
             if (tabTitleMap[targetId]) {
@@ -98,7 +130,6 @@ function initTabs() {
 
             if (targetId === "tab-products") {
                 loadProducts();
-            } else if (targetId === "tab-orders") {
             } else if (targetId === "tab-crawler") {
                 loadCrawlerStatus();
             } else if (targetId === "tab-monitor") {
@@ -111,6 +142,10 @@ function initTabs() {
                     state.records.unreadCount = 0;
                     badge.style.display = "none";
                 }
+            } else if (targetId === "tab-purchase") {
+                loadPurchaseConfig();
+                loadPurchaseOrders();
+                clearPurchaseOrdersBadge();
             } else if (targetId === "tab-terminal") {
                 renderTerminalLogs();
                 const termBody = document.getElementById("terminal-output-container");
@@ -261,158 +296,12 @@ function initEventListeners() {
         }
     });
 
-    // 7. 快捷前往爬虫页
+    // 7. 快捷前往爬虫页 / 抢购设置页
     document.getElementById("btn-quick-goto-crawler")?.addEventListener("click", () => {
         document.querySelector("[data-tab='tab-crawler']")?.click();
     });
-
-    // 8. Dry-Run 模式开关
-    const dryRunToggle = document.getElementById("dry-run-toggle");
-    if (dryRunToggle) {
-        dryRunToggle.addEventListener("change", async (e) => {
-            const isDry = e.target.checked;
-            try {
-                const res = await fetch("/api/auth/toggle_dry_run", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ dry_run: isDry })
-                });
-                const data = await res.json();
-                state.dryRun = data.dry_run;
-                updateModeLabel();
-                alert(data.message);
-            } catch (err) {
-                console.error("切换模式失败:", err);
-            }
-        });
-    }
-
-    // 9. 帐号模态弹窗开启与关闭
-    const accountModal = document.getElementById("account-modal");
-    document.getElementById("btn-open-account-modal")?.addEventListener("click", () => {
-        accountModal?.classList.add("active");
-    });
-    document.getElementById("btn-close-account-modal")?.addEventListener("click", () => {
-        accountModal?.classList.remove("active");
-    });
-    document.getElementById("btn-modal-close-footer")?.addEventListener("click", () => {
-        accountModal?.classList.remove("active");
-    });
-
-    // 10. 浏览器登录唤起与会话同步
-    document.getElementById("btn-launch-browser")?.addEventListener("click", async () => {
-        try {
-            const res = await fetch("/api/auth/login_browser", { method: "POST" });
-            const data = await res.json();
-            alert(data.message);
-        } catch (err) {
-            alert("唤起浏览器失败: " + err);
-        }
-    });
-
-    document.getElementById("btn-sync-browser")?.addEventListener("click", async () => {
-        try {
-            const res = await fetch("/api/auth/sync_session", { method: "POST" });
-            const data = await res.json();
-            alert(data.message);
-                } catch (err) {
-            alert("同步会话异常: " + err);
-        }
-    });
-
-    // 11. 手动 Cookie 保存
-    document.getElementById("btn-save-cookie-str")?.addEventListener("click", async () => {
-        const area = document.getElementById("cookie-input-area");
-        const cookieStr = area ? area.value.trim() : "";
-        if (!cookieStr) {
-            alert("请先粘贴 Cookie 字符串");
-            return;
-        }
-        try {
-            const res = await fetch("/api/auth/save_cookies", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ cookie_str: cookieStr })
-            });
-            const data = await res.json();
-            alert(data.message);
-                } catch (err) {
-            alert("保存 Cookie 失败: " + err);
-        }
-    });
-
-    // 12. 帐号注销
-    document.getElementById("btn-account-logout")?.addEventListener("click", async () => {
-        if (!confirm("确定退出当前登录的 Mandarake 帐号吗？")) return;
-        try {
-            const res = await fetch("/api/auth/logout", { method: "POST" });
-            const data = await res.json();
-            alert(data.message);
-                } catch (err) {
-            alert("注销失败: " + err);
-        }
-    });
-
-    // 13. 下单确认模态框
-    const orderModal = document.getElementById("order-confirm-modal");
-    document.getElementById("btn-close-order-modal")?.addEventListener("click", () => {
-        orderModal?.classList.remove("active");
-    });
-    document.getElementById("btn-cancel-order")?.addEventListener("click", () => {
-        orderModal?.classList.remove("active");
-    });
-
-    document.getElementById("btn-do-order-submit")?.addEventListener("click", async () => {
-        if (!state.pendingOrderItem) return;
-        const item = state.pendingOrderItem;
-        const submitBtn = document.getElementById("btn-do-order-submit");
-        if (submitBtn) {
-            submitBtn.disabled = true;
-            submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> 正在执行下单...`;
-        }
-
-        try {
-            const res = await fetch("/api/order/buy", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    item_id: item.id,
-                    title: item.title,
-                    price: item.price,
-                    img_url: item.img_url,
-                    shop: item.shop,
-                    dry_run: state.dryRun
-                })
-            });
-            const data = await res.json();
-            orderModal?.classList.remove("active");
-            alert(data.message);
-
-            // 实时将当前视图对应商品卡片调整为售罄置灰
-            const cardEl = document.querySelector(`.product-card[data-item-id="${item.id}"]`);
-            if (cardEl) {
-                cardEl.classList.add("is-soldout");
-                const badgeWrap = cardEl.querySelector(".card-badges");
-                if (badgeWrap) {
-                    badgeWrap.innerHTML = '<span class="badge-tag soldout">🔴 売り切れ</span>';
-                }
-                const buyBtn = cardEl.querySelector(".btn-oneclick-order");
-                if (buyBtn) {
-                    buyBtn.disabled = true;
-                    buyBtn.title = "商品已售罄";
-                }
-            }
-
-                    loadProducts();
-            loadStats();
-        } catch (err) {
-            alert("下单请求发生错误: " + err);
-        } finally {
-            if (submitBtn) {
-                submitBtn.disabled = false;
-                submitBtn.innerHTML = `<i class="fa-solid fa-bolt"></i> 立即执行下单`;
-            }
-        }
+    document.getElementById("purchase-header-pill")?.addEventListener("click", () => {
+        document.querySelector("[data-tab='tab-purchase']")?.click();
     });
 
     // 14. 爬虫控制按纽
@@ -463,14 +352,6 @@ function initEventListeners() {
         }
     });
 
-    // 16. 订单记录操作
-    document.getElementById("btn-refresh-orders")?.addEventListener("click", loadOrders);
-    document.getElementById("btn-clear-orders")?.addEventListener("click", async () => {
-        if (confirm("确定清空全部下单历史记录吗？")) {
-            await fetch("/api/orders/clear", { method: "POST" });
-                }
-    });
-
     // 17. 终端控制与过滤
     document.getElementById("btn-clear-terminal")?.addEventListener("click", async () => {
         await fetch("/api/terminal/clear", { method: "POST" });
@@ -492,13 +373,17 @@ function initEventListeners() {
 
     // 18. 监控频率与重试参数保存
     document.getElementById("btn-save-schedule-cfg")?.addEventListener("click", async () => {
-        const intervalSec = parseInt(document.getElementById("cfg-interval-seconds")?.value, 10) || 15;
+        const rawInterval = parseFloat(document.getElementById("cfg-interval-seconds")?.value);
+        const intervalSec = Number.isFinite(rawInterval) ? Math.max(0.1, Math.round(rawInterval * 100) / 100) : 15;
         const parsedRetryCount = parseInt(document.getElementById("cfg-retry-count")?.value, 10);
         const retryCount = Number.isNaN(parsedRetryCount) ? 3 : Math.max(0, parsedRetryCount);
-        const retryDelay = parseFloat(document.getElementById("cfg-retry-delay")?.value) || 2;
+        const rawRetryDelay = parseFloat(document.getElementById("cfg-retry-delay")?.value);
+        const retryDelay = Number.isFinite(rawRetryDelay) ? Math.max(0.1, Math.round(rawRetryDelay * 100) / 100) : 2;
         const burstDuration = parseInt(document.getElementById("cfg-burst-duration")?.value, 10) || 3;
-        const burstInterval = parseFloat(document.getElementById("cfg-burst-interval")?.value) || 3;
-        const burstRetryDelay = parseFloat(document.getElementById("cfg-burst-retry-delay")?.value) || 1;
+        const rawBurstInterval = parseFloat(document.getElementById("cfg-burst-interval")?.value);
+        const burstInterval = Number.isFinite(rawBurstInterval) ? Math.max(0.1, Math.round(rawBurstInterval * 100) / 100) : 3;
+        const rawBurstRetryDelay = parseFloat(document.getElementById("cfg-burst-retry-delay")?.value);
+        const burstRetryDelay = Number.isFinite(rawBurstRetryDelay) ? Math.max(0.1, Math.round(rawBurstRetryDelay * 100) / 100) : 1;
         const bypassCache = document.getElementById("cfg-bypass-cache")?.checked !== false;
         const autoBurstOnHit = document.getElementById("cfg-auto-burst-on-hit")?.checked !== false;
         const monitorDispCount = parseInt(document.getElementById("cfg-monitor-disp-count")?.value, 10) || 48;
@@ -522,10 +407,19 @@ function initEventListeners() {
                 })
             });
             const data = await res.json();
-            alert(
-                "调度与防秒切参数已保存并即时生效！\n" +
-                "日常间隔: " + intervalSec + " 秒 | 爆发扫描: " + burstInterval + " 秒 (持续 " + burstDuration + " 分钟)\n" +
-                "缓存穿透: " + (bypassCache ? "开启" : "关闭") + " | 命中自动追击: " + (autoBurstOnHit ? "开启" : "关闭") + " | 单页条数: " + monitorDispCount
+            const savedSched = (data && data.config && data.config.schedule) || {};
+            const actualInterval = savedSched.interval_seconds !== undefined ? savedSched.interval_seconds : intervalSec;
+            const actualBurstInterval = savedSched.burst_interval_seconds !== undefined ? savedSched.burst_interval_seconds : burstInterval;
+            const intervalEl = document.getElementById("cfg-interval-seconds");
+            if (intervalEl) intervalEl.value = actualInterval;
+            const burstEl = document.getElementById("cfg-burst-interval");
+            if (burstEl) burstEl.value = actualBurstInterval;
+            const retryDelayEl = document.getElementById("cfg-retry-delay");
+            if (retryDelayEl && savedSched.retry_delay !== undefined) retryDelayEl.value = savedSched.retry_delay;
+
+            showToast(
+                `调度参数已保存：日常间隔 ${actualInterval}s | 爆发间隔 ${actualBurstInterval}s (持续 ${burstDuration} 分钟)`,
+                "success"
             );
             loadStats();
         } catch (err) {
@@ -758,6 +652,7 @@ function initEventListeners() {
         const maxPrice = parseInt(document.getElementById("modal-rule-max-price")?.value, 10) || 0;
         const activeModeBtn = document.querySelector("#modal-rule-mode-group .seg-btn.active");
         const matchMode = activeModeBtn ? activeModeBtn.getAttribute("data-mode") : "and";
+        const autoBuy = Boolean(document.getElementById("modal-rule-auto-buy")?.checked);
 
         if (!name) {
             alert("请填写规则名称");
@@ -783,6 +678,7 @@ function initEventListeners() {
                     exclude_keywords: excludeKeywords,
                     match_mode: matchMode,
                     max_price: maxPrice,
+                    auto_buy: autoBuy,
                     enabled: enabledVal
                 })
             });
@@ -972,14 +868,14 @@ function createProductCard(item) {
     card.setAttribute("title", "点击在新标签页打开 Mandarake 官网查看商品详情");
 
     // 缩略图 fallback
-    const imgUrl = item.img_url || "https://order.mandarake.co.jp/content/img/icon/shortcut/192.png";
+    const imgUrl = item.img_url || DEFAULT_ITEM_THUMB;
     const priceText = item.price ? `${item.price.toLocaleString()}円` : "价格未标明";
     const shopText = item.shop || "まんだらけ";
     const itemUrl = item.url || `https://order.mandarake.co.jp/order/detailPage/item?itemCode=${item.id}`;
 
     card.innerHTML = `
         <div class="card-media-wrap">
-            <img src="${imgUrl}" alt="${escapeHtml(item.title)}" loading="lazy" onerror="this.src='https://order.mandarake.co.jp/content/img/icon/shortcut/192.png'">
+            <img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(item.title)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='/static/icon-192.png'">
             <div class="card-badges">
                 ${isInStock ? '<span class="badge-tag stock">🟢 在库有货</span>' : '<span class="badge-tag soldout">🔴 売り切れ</span>'}
                 ${isNew ? '<span class="badge-tag new-arrival">⚡ 新着</span>' : ''}
@@ -998,11 +894,37 @@ function createProductCard(item) {
                 <div class="price-main">${priceText}</div>
                 <div class="price-tax">${item.price_str ? escapeHtml(item.price_str) : ''}</div>
             </div>
+            <div class="card-actions-bar">
+                <button type="button" class="btn-card-quick-buy" ${isInStock ? "" : "disabled"} title="${isInStock ? '立即一键抢购下单' : '该商品已售罄'}">
+                    <i class="fa-solid fa-bolt"></i> ${isInStock ? '一键抢购' : '已售罄'}
+                </button>
+                <button type="button" class="btn-card-open-site" title="在新标签页打开官网详情">
+                    <i class="fa-solid fa-arrow-up-right-from-square"></i> 官网
+                </button>
+            </div>
         </div>
     `;
 
-    // 整个卡片可点击跳转
-    card.addEventListener("click", () => {
+    // 一键抢购按钮事件（阻止冒泡到外层跳转）
+    const quickBuyBtn = card.querySelector(".btn-card-quick-buy");
+    if (quickBuyBtn && isInStock) {
+        quickBuyBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            handleOneClickBuy(item, quickBuyBtn);
+        });
+    }
+
+    const openSiteBtn = card.querySelector(".btn-card-open-site");
+    if (openSiteBtn) {
+        openSiteBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            window.open(itemUrl, "_blank", "noopener,noreferrer");
+        });
+    }
+
+    // 点击卡片其余区域打开官网详情页
+    card.addEventListener("click", (e) => {
+        if (e.target.closest(".card-actions-bar")) return;
         window.open(itemUrl, "_blank", "noopener,noreferrer");
     });
 
@@ -1081,6 +1003,11 @@ async function loadStats() {
         // 调度器与上新监控状态同步
         if (data.scheduler) {
             updateSchedulerUI(data.scheduler);
+        }
+
+        // 抢购引擎状态同步
+        if (data.purchase) {
+            updatePurchaseStatusUI(data.purchase);
         }
 
         } catch (err) {
@@ -1251,6 +1178,12 @@ function initSSE() {
                 handleRecordsClearedEvent();
             } else if (payload.type === "scheduler_status") {
                 updateSchedulerUI(payload.data);
+            } else if (payload.type === "purchase_status") {
+                updatePurchaseStatusUI(payload.data);
+            } else if (payload.type === "order_updated") {
+                handleOrderUpdatedEvent(payload.order);
+            } else if (payload.type === "orders_cleared") {
+                handleOrdersClearedEvent();
             }
         } catch (err) {
             // ignore heartbeat
@@ -1413,7 +1346,7 @@ async function loadMonitorConfig() {
 
         // 1. 调度与重试参数
         const intervalInput = document.getElementById("cfg-interval-seconds");
-        if (intervalInput) intervalInput.value = sched.interval_seconds || 15;
+        if (intervalInput) intervalInput.value = sched.interval_seconds !== undefined ? sched.interval_seconds : 15;
         const retryCountInput = document.getElementById("cfg-retry-count");
         if (retryCountInput) retryCountInput.value = sched.retry_count !== undefined ? sched.retry_count : 3;
         const retryDelayInput = document.getElementById("cfg-retry-delay");
@@ -1472,7 +1405,7 @@ function renderRulesTable(rules) {
     if (!tbody) return;
 
     if (!rules || rules.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" class="text-center" style="padding:40px;color:var(--text-muted)">暂无监控规则，请点击右上角【添加监控规则】进行创建</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center" style="padding:40px;color:var(--text-muted)">暂无监控规则，请点击右上角【添加监控规则】进行创建</td></tr>`;
         return;
     }
 
@@ -1501,6 +1434,7 @@ function renderRulesTable(rules) {
         const ruleId = rule.id || `rule_${idx}`;
         const ruleName = rule.name || "";
         const isEnabled = rule.enabled !== false;
+        const isAutoBuy = Boolean(rule.auto_buy);
 
         tr.innerHTML = `
             <td><strong>${escapeHtml(ruleName)}</strong></td>
@@ -1508,6 +1442,12 @@ function renderRulesTable(rules) {
             <td>${kwHtml}</td>
             <td>${exHtml}</td>
             <td><strong style="color:var(--warning)">${maxPriceStr}</strong></td>
+            <td>
+                <label class="switch-toggle" title="开启后，在【抢购设置】开启总开关时命中此规则将自动下单">
+                    <input type="checkbox" class="rule-autobuy-toggle" ${isAutoBuy ? 'checked' : ''}>
+                    <span class="slider"></span>
+                </label>
+            </td>
             <td>
                 <label class="switch-toggle" title="启用/暂停此规则">
                     <input type="checkbox" class="rule-status-toggle" ${isEnabled ? 'checked' : ''}>
@@ -1525,6 +1465,13 @@ function renderRulesTable(rules) {
                 </div>
             </td>
         `;
+
+        const autoBuyToggle = tr.querySelector(".rule-autobuy-toggle");
+        if (autoBuyToggle) {
+            autoBuyToggle.addEventListener("change", () => {
+                toggleRuleAutoBuy(ruleId, ruleName, autoBuyToggle.checked);
+            });
+        }
 
         const statusToggle = tr.querySelector(".rule-status-toggle");
         if (statusToggle) {
@@ -1594,6 +1541,8 @@ function openRuleModal(rule = null) {
     document.getElementById("modal-rule-keywords").value = kwDisplay;
     document.getElementById("modal-rule-exclude").value = exDisplay;
     document.getElementById("modal-rule-max-price").value = isEdit && rule.max_price ? rule.max_price : "";
+    const autoBuyEl = document.getElementById("modal-rule-auto-buy");
+    if (autoBuyEl) autoBuyEl.checked = isEdit ? Boolean(rule.auto_buy) : false;
 
     // 模式切换
     const mode = (isEdit ? (rule.match_mode || "and") : "and").toLowerCase();
@@ -1621,6 +1570,26 @@ async function deleteMonitorRule(ruleId, ruleName = "") {
         }
     } catch (err) {
         alert("删除规则失败: " + err);
+    }
+}
+
+async function toggleRuleAutoBuy(ruleId, ruleName, autoBuy) {
+    try {
+        const res = await fetch("/api/monitor/rules/toggle_auto_buy", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: ruleId, name: ruleName, auto_buy: autoBuy })
+        });
+        const data = await res.json();
+        if (!data.success) {
+            showToast(data.message || "更新规则自动抢购开关失败", "error");
+            loadMonitorConfig();
+        } else {
+            showToast(`规则【${ruleName || ruleId}】自动抢购已${autoBuy ? "开启" : "关闭"}`, autoBuy ? "success" : "info");
+        }
+    } catch (err) {
+        console.error("更新规则自动抢购状态异常:", err);
+        loadMonitorConfig();
     }
 }
 
@@ -1679,9 +1648,9 @@ function updateSchedulerUI(sched) {
                     title.textContent = `🛡️ 触发官网限流，自动退避中 (剩余 ${sched.backoff_remaining_seconds || 0}s)`;
                 } else if (sched.in_burst_mode) {
                     const burstLabel = sched.burst_reason === "auto" ? "⚡ 自动追击高频模式运行中" : "⚡ 高频爆发模式运行中";
-                    title.textContent = `${burstLabel} (每 ${sched.burst_interval_seconds || 3}s 扫描 | 剩余 ${sched.burst_remaining_seconds}s)`;
+                    title.textContent = `${burstLabel} (每 ${sched.burst_interval_seconds !== undefined ? sched.burst_interval_seconds : 3}s 扫描 | 剩余 ${sched.burst_remaining_seconds}s)`;
                 } else {
-                    title.textContent = `监控调度器运行中 (每 ${sched.interval_seconds || 15} 秒巡检一次)`;
+                    title.textContent = `监控调度器运行中 (每 ${sched.interval_seconds !== undefined ? sched.interval_seconds : 15} 秒巡检一次)`;
                 }
             }
             if (pauseBtn) {
@@ -2351,7 +2320,7 @@ function createMonitorRecordCard(item) {
     card.setAttribute("data-item-url", itemUrl);
 
     // 缩略图 fallback 与商品详情链接
-    const imgUrl = item.img_url || "https://order.mandarake.co.jp/content/img/icon/shortcut/192.png";
+    const imgUrl = item.img_url || DEFAULT_ITEM_THUMB;
     const priceText = item.price ? `${item.price.toLocaleString()}円` : "价格未标明";
     const shopText = item.shop || "まんだらけ";
     const ruleText = item.rule_name || "默认监控规则";
@@ -2363,7 +2332,7 @@ function createMonitorRecordCard(item) {
 
     card.innerHTML = `
         <div class="record-thumb-wrap" title="点击新窗口打开商品图片或直达官网" onclick="window.open('${escapeHtml(itemUrl)}', '_blank', 'noopener,noreferrer')">
-            <img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(item.title)}" loading="lazy" onerror="this.src='https://order.mandarake.co.jp/content/img/icon/shortcut/192.png'">
+            <img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(item.title)}" loading="lazy" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='/static/icon-192.png'">
             <span class="record-thumb-tag">⚡ 上新命中</span>
         </div>
         <div class="record-details">
@@ -2389,6 +2358,9 @@ function createMonitorRecordCard(item) {
             </div>
         </div>
         <div class="record-actions">
+            <button class="btn btn-warning btn-sm btn-rec-quick-buy" title="一键下单抢购该商品">
+                <i class="fa-solid fa-bolt"></i> 一键抢购
+            </button>
             <button class="btn btn-primary btn-sm btn-open-url" title="在新标签页中打开 Mandarake 官网详情页">
                 <i class="fa-solid fa-arrow-up-right-from-square"></i> 官网直达
             </button>
@@ -2402,6 +2374,19 @@ function createMonitorRecordCard(item) {
     `;
 
     // 绑定卡片内按钮事件
+    const recBuyBtn = card.querySelector(".btn-rec-quick-buy");
+    recBuyBtn?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        handleOneClickBuy({
+            id: item.item_id,
+            title: item.title,
+            price: item.price || 0,
+            img_url: item.img_url || "",
+            shop: item.shop || "",
+            url: itemUrl
+        }, recBuyBtn);
+    });
+
     card.querySelector(".btn-open-url")?.addEventListener("click", (e) => {
         e.stopPropagation();
         window.open(itemUrl, "_blank", "noopener,noreferrer");
@@ -2761,3 +2746,1011 @@ function showToast(message, type = "info", duration = 3000) {
 }
 
 window.showToast = showToast;
+
+// ==========================================================================
+// 抢购设置 & 一键下单模块 (Purchase & Auto-Order Module)
+// ==========================================================================
+
+function initPurchaseModule() {
+    // 顶部快捷 Dry-Run 开关
+    document.getElementById("p-top-dry-run-toggle")?.addEventListener("change", async (e) => {
+        const dryRun = Boolean(e.target.checked);
+        if (!dryRun && !confirm("⚠️ 确定关闭 Dry-Run 仿真演练、切换为【实盘下单模式】吗？\n切换后一键抢购与自动抢购将会向 Mandarake 提交真实订单！")) {
+            e.target.checked = true;
+            return;
+        }
+        await savePurchaseConfigPartial({ dry_run: dryRun }, dryRun ? "已开启 Dry-Run 仿真演练保护" : "⚠️ 已切换为 LIVE 实盘抢购模式");
+    });
+
+    // 顶部快捷自动抢购开关
+    document.getElementById("p-top-auto-buy-toggle")?.addEventListener("change", async (e) => {
+        const autoEnabled = Boolean(e.target.checked);
+        await savePurchaseConfigPartial({ auto_buy_enabled: autoEnabled }, autoEnabled ? "⚡ 已开启自动抢购总开关" : "已关闭自动抢购");
+    });
+
+    // 卡片内部开关同步
+    document.getElementById("p-dry-run")?.addEventListener("change", (e) => {
+        const topDry = document.getElementById("p-top-dry-run-toggle");
+        if (topDry) topDry.checked = e.target.checked;
+        updatePurchaseModeDecorators(e.target.checked);
+    });
+
+    document.getElementById("p-auto-buy-enabled")?.addEventListener("change", (e) => {
+        const topAuto = document.getElementById("p-top-auto-buy-toggle");
+        if (topAuto) topAuto.checked = e.target.checked;
+    });
+
+    // 自定义地址开关视觉提示
+    document.getElementById("p-use-custom-address")?.addEventListener("change", (e) => {
+        updateAddressFieldsState(Boolean(e.target.checked));
+    });
+
+    // 登录密码显隐
+    document.getElementById("btn-p-toggle-pwd")?.addEventListener("click", () => {
+        const pwdEl = document.getElementById("p-login-pwd");
+        const icon = document.querySelector("#btn-p-toggle-pwd i");
+        if (!pwdEl) return;
+        if (pwdEl.type === "password") {
+            pwdEl.type = "text";
+            if (icon) icon.className = "fa-regular fa-eye-slash";
+        } else {
+            pwdEl.type = "password";
+            if (icon) icon.className = "fa-regular fa-eye";
+        }
+    });
+
+    // 账密登录
+    document.getElementById("btn-p-login")?.addEventListener("click", loginMandarake);
+    document.getElementById("p-login-pwd")?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            loginMandarake();
+        }
+    });
+
+    // 打开浏览器登录 & 复制提取命令 & 导入 Cookie
+    document.getElementById("btn-p-launch-browser")?.addEventListener("click", launchBrowserLogin);
+    document.getElementById("btn-p-copy-cookie-cmd")?.addEventListener("click", () => {
+        const cmd = "copy(document.cookie)";
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(cmd).then(() => {
+                showToast("已复制 Console 命令 `copy(document.cookie)`！请在官网登录后按 F12 粘贴执行", "success");
+            }).catch(() => fallbackCopy(cmd));
+        } else {
+            fallbackCopy(cmd);
+        }
+    });
+    document.getElementById("btn-p-import-cookies")?.addEventListener("click", importMandarakeCookies);
+
+    // 刷新 / 检测登录态 / 退出登录
+    document.getElementById("btn-p-check-auth")?.addEventListener("click", checkMandarakeLogin);
+    document.getElementById("btn-p-refresh-auth")?.addEventListener("click", checkMandarakeLogin);
+    document.getElementById("btn-p-logout")?.addEventListener("click", logoutMandarake);
+
+    // 购物车查看与清空
+    document.getElementById("btn-p-view-cart")?.addEventListener("click", viewMandarakeCart);
+    document.getElementById("btn-p-clear-cart")?.addEventListener("click", clearMandarakeCart);
+
+    // 保存收货地址与配送偏好
+    document.getElementById("btn-save-purchase-address")?.addEventListener("click", savePurchaseAddress);
+
+    // 保存自动抢购与支付设置
+    document.getElementById("btn-save-purchase-settings")?.addEventListener("click", savePurchaseSettings);
+
+    // 订单历史刷新 / 清空 / 实盘链路终步前测试
+    document.getElementById("btn-refresh-purchase-orders")?.addEventListener("click", loadPurchaseOrders);
+    document.getElementById("btn-clear-purchase-orders")?.addEventListener("click", clearPurchaseOrders);
+    document.getElementById("btn-p-test-live-checkout")?.addEventListener("click", runLiveCheckoutTest);
+
+    // 一键抢购弹窗绑定
+    const qbModal = document.getElementById("quick-buy-modal");
+    document.getElementById("btn-close-quick-buy")?.addEventListener("click", () => {
+        qbModal?.classList.remove("active");
+    });
+    document.getElementById("btn-cancel-quick-buy")?.addEventListener("click", () => {
+        qbModal?.classList.remove("active");
+    });
+    document.getElementById("btn-confirm-quick-buy")?.addEventListener("click", async () => {
+        const item = state.purchase.pendingItem;
+        if (!item) return;
+        const paySelect = document.getElementById("qb-payment-select");
+        const chosenPayment = paySelect ? paySelect.value : state.purchase.defaultPaymentMethod;
+        const confirmBtn = document.getElementById("btn-confirm-quick-buy");
+        await executeQuickBuy(item, chosenPayment, confirmBtn, () => {
+            qbModal?.classList.remove("active");
+        });
+    });
+}
+
+async function parseJsonResponse(res) {
+    const text = await res.text();
+    try {
+        return JSON.parse(text);
+    } catch (_e) {
+        if (res.status === 404) {
+            throw new Error("后端接口未注册 (HTTP 404)：当前运行的后端仍是旧进程，请重启 python main.py（或重启 Docker 容器）后刷新页面重试。");
+        }
+        if (res.status >= 500) {
+            throw new Error(`服务端内部错误 (HTTP ${res.status})，请查看【实时终端】或后端控制台日志。`);
+        }
+        throw new Error(`后端返回非 JSON 响应 (HTTP ${res.status})，请确认后端服务已重启至最新版本。`);
+    }
+}
+
+async function loadPurchaseConfig() {
+    try {
+        const res = await fetch("/api/purchase/config");
+        const data = await parseJsonResponse(res);
+        if (!data.success) return;
+
+        const cfg = data.config || {};
+        const status = data.status || {};
+        state.purchase.paymentMethods = data.payment_methods || [];
+        state.purchase.excludedPaymentMethods = data.excluded_payment_methods || [];
+        state.purchase.prefectures = data.prefectures || [];
+        state.purchase.configLoaded = true;
+
+        applyPurchaseConfigToState(cfg);
+        populatePrefectures();
+        renderPaymentMethodOptions();
+        renderExcludedPayments();
+        fillPurchaseFormInputs(cfg);
+        updatePurchaseStatusUI(status);
+        if (data.order_stats) {
+            renderOrderStatsSummary(data.order_stats);
+        }
+    } catch (err) {
+        console.error("加载抢购配置失败:", err);
+    }
+}
+
+function applyPurchaseConfigToState(cfg) {
+    if (!cfg) return;
+    state.purchase.dryRun = cfg.dry_run !== false;
+    state.purchase.autoBuyEnabled = Boolean(cfg.auto_buy_enabled);
+    state.purchase.autoBuyScope = cfg.auto_buy_scope || "rule_enabled";
+    state.purchase.autoBuyOnRestock = cfg.auto_buy_on_restock !== false;
+    state.purchase.autoBuyMaxPrice = Number(cfg.auto_buy_max_price || 0);
+    state.purchase.autoBuyMaxOrdersPerDay = Number(cfg.auto_buy_max_orders_per_day || 5);
+    state.purchase.autoBuyCooldownSeconds = Number(cfg.auto_buy_cooldown_seconds || 3600);
+    state.purchase.quickBuySkipConfirm = Boolean(cfg.quick_buy_skip_confirm);
+    state.purchase.defaultPaymentMethod = cfg.default_payment_method || "bank";
+    state.purchase.fallbackPaymentMethod = cfg.fallback_payment_method || "cod";
+    state.purchase.useCustomAddress = Boolean(cfg.use_custom_address);
+    state.purchase.address = cfg.address || {};
+}
+
+function populatePrefectures() {
+    const sel = document.getElementById("p-addr-prefecture");
+    if (!sel) return;
+    const current = sel.value;
+    let html = '<option value="">-- 保持账号默认 / 请选择都道府県 --</option>';
+    (state.purchase.prefectures || []).forEach(pref => {
+        html += `<option value="${escapeHtml(pref)}">${escapeHtml(pref)}</option>`;
+    });
+    sel.innerHTML = html;
+    if (current) sel.value = current;
+}
+
+function renderPaymentMethodOptions() {
+    const listEl = document.getElementById("p-payment-methods-list");
+    const fallbackSel = document.getElementById("p-fallback-payment");
+    const qbSelect = document.getElementById("qb-payment-select");
+    const methods = state.purchase.paymentMethods || [];
+    const currentDefault = state.purchase.defaultPaymentMethod || "bank";
+    const currentFallback = state.purchase.fallbackPaymentMethod || "cod";
+
+    if (listEl) {
+        listEl.innerHTML = "";
+        methods.forEach(m => {
+            const isSelected = m.code === currentDefault;
+            const card = document.createElement("label");
+            card.className = `payment-option-card ${isSelected ? "selected" : ""}`;
+            card.innerHTML = `
+                <div class="payment-option-top">
+                    <span class="payment-option-radio-wrap">
+                        <input type="radio" name="p-default-payment" value="${escapeHtml(m.code)}" ${isSelected ? "checked" : ""}>
+                        <span>${escapeHtml(m.label)}</span>
+                    </span>
+                    <span class="payment-option-badge">${escapeHtml(m.badge || "免认证")}</span>
+                </div>
+                <div class="payment-option-summary">${escapeHtml(m.summary || "")}</div>
+                <div class="payment-option-caveat"><i class="fa-solid fa-circle-info"></i> ${escapeHtml(m.caveats || "")}</div>
+            `;
+            const radio = card.querySelector("input[type='radio']");
+            radio?.addEventListener("change", () => {
+                state.purchase.defaultPaymentMethod = m.code;
+                state.purchase.defaultPaymentLabel = m.label;
+                listEl.querySelectorAll(".payment-option-card").forEach(c => c.classList.remove("selected"));
+                card.classList.add("selected");
+            });
+            listEl.appendChild(card);
+        });
+    }
+
+    if (fallbackSel) {
+        let fbHtml = '<option value="none">不降级（主选不可用则安全中止）</option>';
+        methods.forEach(m => {
+            fbHtml += `<option value="${escapeHtml(m.code)}">${escapeHtml(m.label)}</option>`;
+        });
+        fallbackSel.innerHTML = fbHtml;
+        fallbackSel.value = currentFallback;
+    }
+
+    if (qbSelect) {
+        let qbHtml = "";
+        methods.forEach(m => {
+            qbHtml += `<option value="${escapeHtml(m.code)}">${escapeHtml(m.label)}</option>`;
+        });
+        qbSelect.innerHTML = qbHtml;
+        qbSelect.value = currentDefault;
+    }
+}
+
+function renderExcludedPayments() {
+    const container = document.getElementById("p-excluded-payments-list");
+    if (!container) return;
+    const excluded = state.purchase.excludedPaymentMethods || [];
+    if (excluded.length === 0) {
+        container.innerHTML = "";
+        return;
+    }
+    container.innerHTML = excluded.map(item => `
+        <div class="excluded-payment-row">
+            <strong>🚫 ${escapeHtml(item.name || "")}</strong>
+            <span>${escapeHtml(item.reason || "")}</span>
+        </div>
+    `).join("");
+}
+
+function fillPurchaseFormInputs(cfg) {
+    const loginId = document.getElementById("p-login-id");
+    if (loginId) loginId.value = cfg.username || "";
+    const loginPwd = document.getElementById("p-login-pwd");
+    if (loginPwd && cfg.has_saved_password && !loginPwd.value) {
+        loginPwd.placeholder = "已保存登录密码（留空保持不变）";
+    }
+    const saveCreds = document.getElementById("p-save-creds");
+    if (saveCreds) saveCreds.checked = Boolean(cfg.save_credentials);
+
+    const dryRunEl = document.getElementById("p-dry-run");
+    if (dryRunEl) dryRunEl.checked = cfg.dry_run !== false;
+    const topDryRunEl = document.getElementById("p-top-dry-run-toggle");
+    if (topDryRunEl) topDryRunEl.checked = cfg.dry_run !== false;
+    updatePurchaseModeDecorators(cfg.dry_run !== false);
+
+    const autoBuyEl = document.getElementById("p-auto-buy-enabled");
+    if (autoBuyEl) autoBuyEl.checked = Boolean(cfg.auto_buy_enabled);
+    const topAutoBuyEl = document.getElementById("p-top-auto-buy-toggle");
+    if (topAutoBuyEl) topAutoBuyEl.checked = Boolean(cfg.auto_buy_enabled);
+
+    const scopeEl = document.getElementById("p-auto-buy-scope");
+    if (scopeEl) scopeEl.value = cfg.auto_buy_scope || "rule_enabled";
+    const maxPriceEl = document.getElementById("p-auto-buy-max-price");
+    if (maxPriceEl) maxPriceEl.value = cfg.auto_buy_max_price || 0;
+    const maxDailyEl = document.getElementById("p-auto-buy-max-daily");
+    if (maxDailyEl) maxDailyEl.value = cfg.auto_buy_max_orders_per_day || 5;
+    const cooldownEl = document.getElementById("p-auto-buy-cooldown");
+    if (cooldownEl) cooldownEl.value = cfg.auto_buy_cooldown_seconds || 3600;
+    const restockEl = document.getElementById("p-auto-buy-on-restock");
+    if (restockEl) restockEl.checked = cfg.auto_buy_on_restock !== false;
+    const skipConfirmEl = document.getElementById("p-quick-buy-skip-confirm");
+    if (skipConfirmEl) skipConfirmEl.checked = Boolean(cfg.quick_buy_skip_confirm);
+
+    const useCustomAddrEl = document.getElementById("p-use-custom-address");
+    if (useCustomAddrEl) useCustomAddrEl.checked = Boolean(cfg.use_custom_address);
+    updateAddressFieldsState(Boolean(cfg.use_custom_address));
+
+    const addr = cfg.address || {};
+    const fieldMap = {
+        "p-addr-last-name": addr.last_name || "",
+        "p-addr-first-name": addr.first_name || "",
+        "p-addr-last-kana": addr.last_name_kana || "",
+        "p-addr-first-kana": addr.first_name_kana || "",
+        "p-addr-postal": addr.postal_code || "",
+        "p-addr-prefecture": addr.prefecture || "",
+        "p-addr-address1": addr.address1 || "",
+        "p-addr-address2": addr.address2 || "",
+        "p-addr-phone": addr.phone || "",
+        "p-addr-email": addr.email || "",
+        "p-addr-delivery-method": addr.delivery_method || "auto",
+        "p-addr-delivery-time": addr.delivery_time || "none",
+        "p-addr-remarks": addr.remarks || "",
+    };
+    Object.entries(fieldMap).forEach(([elId, val]) => {
+        const el = document.getElementById(elId);
+        if (el) el.value = val;
+    });
+}
+
+function updateAddressFieldsState(useCustom) {
+    const wrap = document.getElementById("p-address-fields-wrap");
+    if (wrap) {
+        wrap.classList.toggle("address-fields-dimmed", !useCustom);
+    }
+}
+
+function updatePurchaseModeDecorators(isDry) {
+    const topLabel = document.getElementById("p-top-dry-run-label");
+    if (topLabel) {
+        topLabel.textContent = isDry ? "🛡️ Dry-Run 仿真演练" : "🚀 LIVE 实盘下单";
+        topLabel.style.color = isDry ? "#60a5fa" : "#f87171";
+    }
+    const modeBadge = document.getElementById("p-mode-badge");
+    if (modeBadge) {
+        modeBadge.textContent = isDry ? "仿真演练保护中" : "⚠️ 实盘下单生效中";
+        modeBadge.className = isDry ? "badge-tag stock" : "badge-tag soldout";
+    }
+}
+
+function updatePurchaseStatusUI(status) {
+    if (!status) return;
+    state.purchase.isLoggedIn = Boolean(status.is_logged_in);
+    state.purchase.accountName = status.account_name || "";
+    state.purchase.dryRun = status.dry_run !== false;
+    state.purchase.autoBuyEnabled = Boolean(status.auto_buy_enabled);
+    state.purchase.quickBuySkipConfirm = Boolean(status.quick_buy_skip_confirm);
+    state.purchase.defaultPaymentMethod = status.default_payment_method || state.purchase.defaultPaymentMethod || "bank";
+    state.purchase.defaultPaymentLabel = status.default_payment_label || state.purchase.defaultPaymentLabel || "銀行振込";
+    state.purchase.useCustomAddress = Boolean(status.use_custom_address);
+
+    // 顶部 Header 抢购药丸
+    const headerDot = document.getElementById("purchase-header-dot");
+    const headerText = document.getElementById("purchase-header-text");
+    if (headerDot) {
+        headerDot.className = `status-dot ${state.purchase.isLoggedIn ? "connected" : "disconnected"}`;
+    }
+    if (headerText) {
+        const authTxt = state.purchase.isLoggedIn ? `已登录: ${state.purchase.accountName || "会员"}` : "未登录";
+        const modeTxt = state.purchase.dryRun ? "演练" : "实盘";
+        const autoTxt = state.purchase.autoBuyEnabled ? " | ⚡自动抢" : "";
+        headerText.textContent = `${authTxt} | ${modeTxt}${autoTxt}`;
+    }
+
+    // 抢购页顶部栏
+    const topDot = document.getElementById("p-top-dot");
+    const topTitle = document.getElementById("p-top-login-title");
+    const topMeta = document.getElementById("p-top-login-meta");
+    const authBadge = document.getElementById("p-auth-badge");
+    const payPill = document.getElementById("p-top-payment-pill");
+    const topDry = document.getElementById("p-top-dry-run-toggle");
+    const topAuto = document.getElementById("p-top-auto-buy-toggle");
+    const topAutoLabel = document.getElementById("p-top-auto-buy-label");
+
+    if (topDot) topDot.className = `status-indicator-dot ${state.purchase.isLoggedIn ? "" : "stopped"}`;
+    if (topTitle) {
+        topTitle.textContent = state.purchase.isLoggedIn
+            ? `已登录 Mandarake: ${state.purchase.accountName || "会员"}`
+            : "尚未登录 Mandarake 账号";
+    }
+    if (topMeta) {
+        topMeta.textContent = status.last_login_message || "请先登录或导入 Cookie";
+    }
+    if (authBadge) {
+        authBadge.textContent = state.purchase.isLoggedIn ? "已登录" : "未登录";
+        authBadge.style.background = state.purchase.isLoggedIn ? "var(--success)" : "var(--danger)";
+    }
+    if (payPill) {
+        payPill.innerHTML = `<i class="fa-solid fa-credit-card"></i> 默认支付: ${escapeHtml(state.purchase.defaultPaymentLabel)}`;
+    }
+    if (topDry) topDry.checked = state.purchase.dryRun;
+    const cardDry = document.getElementById("p-dry-run");
+    if (cardDry) cardDry.checked = state.purchase.dryRun;
+    if (topAuto) topAuto.checked = state.purchase.autoBuyEnabled;
+    const cardAuto = document.getElementById("p-auto-buy-enabled");
+    if (cardAuto) cardAuto.checked = state.purchase.autoBuyEnabled;
+    if (topAutoLabel) {
+        topAutoLabel.textContent = state.purchase.autoBuyEnabled ? "⚡ 自动抢购: 开" : "⚡ 自动抢购: 关";
+        topAutoLabel.style.color = state.purchase.autoBuyEnabled ? "#fbbf24" : "var(--text-secondary)";
+    }
+    updatePurchaseModeDecorators(state.purchase.dryRun);
+}
+
+async function savePurchaseConfigPartial(partialPayload, successToastMsg = "设置已保存") {
+    try {
+        const res = await fetch("/api/purchase/config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(partialPayload)
+        });
+        const data = await parseJsonResponse(res);
+        if (data.success) {
+            if (data.config) applyPurchaseConfigToState(data.config);
+            if (data.status) updatePurchaseStatusUI(data.status);
+            showToast(successToastMsg, "success");
+        } else {
+            showToast(data.message || "保存失败", "error");
+        }
+        return data;
+    } catch (err) {
+        showToast("保存购买配置异常: " + err, "error");
+        return null;
+    }
+}
+
+async function savePurchaseSettings() {
+    const selectedRadio = document.querySelector("input[name='p-default-payment']:checked");
+    const defaultPay = selectedRadio ? selectedRadio.value : (state.purchase.defaultPaymentMethod || "bank");
+    const fallbackPay = document.getElementById("p-fallback-payment")?.value || "cod";
+    const dryRun = document.getElementById("p-dry-run")?.checked !== false;
+    if (state.purchase.dryRun && !dryRun) {
+        if (!confirm("⚠️ 确定关闭 Dry-Run 仿真演练、切换为【LIVE 实盘下单模式】吗？\n切换后一键抢购与自动抢购将会向 Mandarake 提交真实订单！")) {
+            const cardDry = document.getElementById("p-dry-run");
+            if (cardDry) cardDry.checked = true;
+            const topDry = document.getElementById("p-top-dry-run-toggle");
+            if (topDry) topDry.checked = true;
+            updatePurchaseModeDecorators(true);
+            return;
+        }
+    }
+    const autoBuyEnabled = Boolean(document.getElementById("p-auto-buy-enabled")?.checked);
+    const scope = document.getElementById("p-auto-buy-scope")?.value || "rule_enabled";
+    const maxPrice = Math.max(0, parseInt(document.getElementById("p-auto-buy-max-price")?.value, 10) || 0);
+    const maxDaily = Math.max(1, parseInt(document.getElementById("p-auto-buy-max-daily")?.value, 10) || 5);
+    const cooldown = Math.max(10, parseInt(document.getElementById("p-auto-buy-cooldown")?.value, 10) || 3600);
+    const onRestock = document.getElementById("p-auto-buy-on-restock")?.checked !== false;
+    const skipConfirm = Boolean(document.getElementById("p-quick-buy-skip-confirm")?.checked);
+
+    const payload = {
+        dry_run: dryRun,
+        auto_buy_enabled: autoBuyEnabled,
+        auto_buy_scope: scope,
+        auto_buy_max_price: maxPrice,
+        auto_buy_max_orders_per_day: maxDaily,
+        auto_buy_cooldown_seconds: cooldown,
+        auto_buy_on_restock: onRestock,
+        quick_buy_skip_confirm: skipConfirm,
+        default_payment_method: defaultPay,
+        fallback_payment_method: fallbackPay,
+    };
+
+    const data = await savePurchaseConfigPartial(payload, "自动抢购与默认支付设置已保存生效！");
+    if (data && data.config) {
+        fillPurchaseFormInputs(data.config);
+        renderPaymentMethodOptions();
+    }
+}
+
+async function savePurchaseAddress() {
+    let useCustom = Boolean(document.getElementById("p-use-custom-address")?.checked);
+    const address = {
+        last_name: document.getElementById("p-addr-last-name")?.value.trim() || "",
+        first_name: document.getElementById("p-addr-first-name")?.value.trim() || "",
+        last_name_kana: document.getElementById("p-addr-last-kana")?.value.trim() || "",
+        first_name_kana: document.getElementById("p-addr-first-kana")?.value.trim() || "",
+        postal_code: document.getElementById("p-addr-postal")?.value.trim() || "",
+        prefecture: document.getElementById("p-addr-prefecture")?.value.trim() || "",
+        address1: document.getElementById("p-addr-address1")?.value.trim() || "",
+        address2: document.getElementById("p-addr-address2")?.value.trim() || "",
+        phone: document.getElementById("p-addr-phone")?.value.trim() || "",
+        email: document.getElementById("p-addr-email")?.value.trim() || "",
+        delivery_method: document.getElementById("p-addr-delivery-method")?.value || "auto",
+        delivery_time: document.getElementById("p-addr-delivery-time")?.value || "none",
+        remarks: document.getElementById("p-addr-remarks")?.value || "",
+    };
+
+    if (!useCustom && (address.last_name || address.postal_code || address.address1 || address.phone)) {
+        if (confirm("检测到您已填写收货地址信息，但尚未勾选「启用自定义地址覆盖」。\n是否同时开启自定义地址覆盖，使下单时自动填入这些信息？")) {
+            useCustom = true;
+            const customChk = document.getElementById("p-use-custom-address");
+            if (customChk) customChk.checked = true;
+            updateAddressFieldsState(true);
+        }
+    }
+
+    if (useCustom && (!address.last_name || !address.postal_code || !address.address1 || !address.phone)) {
+        if (!confirm("已勾选「启用自定义地址覆盖」，但姓/邮编/市区町村/电话尚未填全（空字段会保留官网默认值）。确认继续保存吗？")) {
+            return;
+        }
+    }
+
+    await savePurchaseConfigPartial(
+        { use_custom_address: useCustom, address: address },
+        useCustom ? "自定义收货地址与配送偏好已保存！" : "配送偏好已保存（当前使用会员默认收货地址）"
+    );
+}
+
+async function loginMandarake() {
+    const username = document.getElementById("p-login-id")?.value.trim() || "";
+    const password = document.getElementById("p-login-pwd")?.value || "";
+    const saveCreds = Boolean(document.getElementById("p-save-creds")?.checked);
+    const btn = document.getElementById("btn-p-login");
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> 正在尝试登录...`;
+    }
+    try {
+        const res = await fetch("/api/purchase/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password, save_credentials: saveCreds })
+        });
+        const data = await parseJsonResponse(res);
+        if (data.status) updatePurchaseStatusUI(data.status);
+        if (data.success) {
+            showToast(data.message || "Mandarake 登录成功！", "success");
+        } else {
+            showToast(data.message || "登录失败", "warning", 6000);
+            if (data.requires_browser_login) {
+                document.querySelector(".subtab-btn[data-subtab='pane-login-cookie']")?.click();
+            }
+        }
+    } catch (err) {
+        showToast("登录请求异常: " + err, "error");
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `<i class="fa-solid fa-right-to-bracket"></i> 登录 Mandarake 账号`;
+        }
+    }
+}
+
+async function launchBrowserLogin() {
+    try {
+        const res = await fetch("/api/purchase/auth/launch_browser", { method: "POST" });
+        const data = await parseJsonResponse(res);
+        if (data.login_url && !data.success) {
+            window.open(data.login_url, "_blank", "noopener,noreferrer");
+        }
+        showToast(data.message || "已准备官网登录页面", data.success ? "success" : "info", 6000);
+    } catch (err) {
+        window.open("https://my.mandarake.co.jp/customer/login/?lc=ja", "_blank", "noopener,noreferrer");
+    }
+}
+
+async function importMandarakeCookies() {
+    const cookieStr = document.getElementById("p-cookie-raw")?.value.trim() || "";
+    const sessionId = document.getElementById("p-cookie-session-id")?.value.trim() || "";
+    const userId = document.getElementById("p-cookie-user-id")?.value.trim() || "";
+
+    if (!cookieStr && (!sessionId || !userId)) {
+        showToast("请粘贴完整 Cookie 字符串，或填写 mandarake_sessionId 与 mandarake_userId", "warning");
+        return;
+    }
+
+    const btn = document.getElementById("btn-p-import-cookies");
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> 正在在线验证 Cookie...`;
+    }
+    try {
+        const res = await fetch("/api/purchase/auth/import_cookies", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ cookie_str: cookieStr, session_id: sessionId, user_id: userId, verify_online: true })
+        });
+        const data = await parseJsonResponse(res);
+        if (data.status) updatePurchaseStatusUI(data.status);
+        showToast(data.message || (data.success ? "Cookie 导入成功！" : "Cookie 验证失败"), data.success ? "success" : "error", 5000);
+    } catch (err) {
+        showToast("导入 Cookie 异常: " + (err?.message || String(err)), "error");
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `<i class="fa-solid fa-file-import"></i> 导入 Cookie 并在线验活`;
+        }
+    }
+}
+
+async function checkMandarakeLogin() {
+    try {
+        const res = await fetch("/api/purchase/auth/check", { method: "POST" });
+        const data = await parseJsonResponse(res);
+        if (data.status) updatePurchaseStatusUI(data.status);
+        showToast(data.message || (data.is_logged_in ? "登录态有效" : "尚未登录或会话已过期"), data.is_logged_in ? "success" : "warning");
+    } catch (err) {
+        showToast("检测登录态异常: " + (err?.message || String(err)), "error");
+    }
+}
+
+async function logoutMandarake() {
+    if (!confirm("确定退出当前登录的 Mandarake 账号并清除会话 Cookie 吗？")) return;
+    try {
+        const res = await fetch("/api/purchase/auth/logout", { method: "POST" });
+        const data = await parseJsonResponse(res);
+        if (data.status) updatePurchaseStatusUI(data.status);
+        showToast(data.message || "已退出登录", "info");
+    } catch (err) {
+        showToast("退出登录异常: " + (err?.message || String(err)), "error");
+    }
+}
+
+async function viewMandarakeCart() {
+    try {
+        const res = await fetch("/api/purchase/cart");
+        const data = await parseJsonResponse(res);
+        if (!data.success) {
+            showToast(data.message || "读取购物车失败", "error");
+            return;
+        }
+        if (!data.items || data.items.length === 0) {
+            showToast("当前官网购物车为空 (0 件)", "info");
+        } else {
+            const lines = data.items.map(it => `• [${it.id}] ${it.title} ${it.price_str}`).join("\n");
+            alert(`当前 Mandarake 购物车共 ${data.count} 件商品：\n\n${lines}`);
+        }
+    } catch (err) {
+        showToast("查询购物车异常: " + (err?.message || String(err)), "error");
+    }
+}
+
+async function clearMandarakeCart() {
+    if (!confirm("确定清空当前 Mandarake 官网账号购物车中的所有商品吗？")) return;
+    try {
+        const res = await fetch("/api/purchase/cart/clear", { method: "POST" });
+        const data = await parseJsonResponse(res);
+        showToast(data.message || "已清空购物车", data.success ? "success" : "error");
+    } catch (err) {
+        showToast("清空购物车异常: " + (err?.message || String(err)), "error");
+    }
+}
+
+// --- 商品阅览 / 上新记录 一键抢购 ---
+
+async function handleOneClickBuy(item, triggerBtn = null) {
+    if (!state.purchase.configLoaded) {
+        await loadPurchaseConfig();
+    }
+    if (state.purchase.quickBuySkipConfirm && state.purchase.isLoggedIn) {
+        await executeQuickBuy(item, state.purchase.defaultPaymentMethod, triggerBtn);
+        return;
+    }
+    openQuickBuyModal(item);
+}
+
+function openQuickBuyModal(item) {
+    const modal = document.getElementById("quick-buy-modal");
+    if (!modal) return;
+    state.purchase.pendingItem = item;
+
+    const imgEl = document.getElementById("qb-item-img");
+    if (imgEl) {
+        imgEl.referrerPolicy = "no-referrer";
+        imgEl.onerror = () => {
+            imgEl.onerror = null;
+            imgEl.src = DEFAULT_ITEM_THUMB;
+        };
+        imgEl.src = item.img_url || DEFAULT_ITEM_THUMB;
+    }
+    const titleEl = document.getElementById("qb-item-title");
+    if (titleEl) titleEl.textContent = item.title || `商品 ${item.id}`;
+    const priceEl = document.getElementById("qb-item-price");
+    if (priceEl) priceEl.textContent = item.price ? `${Number(item.price).toLocaleString()}円` : (item.price_str || "价格未知");
+    const shopEl = document.getElementById("qb-item-shop");
+    if (shopEl) shopEl.textContent = item.shop || "まんだらけ";
+    const idEl = document.getElementById("qb-item-id");
+    if (idEl) idEl.textContent = `商品ID: ${item.id}`;
+
+    const authBanner = document.getElementById("qb-auth-banner");
+    if (authBanner) {
+        if (state.purchase.isLoggedIn) {
+            authBanner.className = "qb-banner ok";
+            authBanner.innerHTML = `<i class="fa-solid fa-circle-check"></i> 当前已登录账号：<strong>${escapeHtml(state.purchase.accountName || "会员")}</strong>`;
+        } else {
+            authBanner.className = "qb-banner danger";
+            authBanner.innerHTML = `
+                <i class="fa-solid fa-triangle-exclamation"></i>
+                <span style="flex:1;">当前尚未登录！请先前往【抢购设置】登录或导入 Cookie 后再下单。</span>
+                <button type="button" class="btn btn-primary btn-xs" id="btn-qb-goto-login">前往登录 →</button>
+            `;
+            authBanner.querySelector("#btn-qb-goto-login")?.addEventListener("click", () => {
+                modal.classList.remove("active");
+                document.querySelector('[data-tab="tab-purchase"]')?.click();
+            });
+        }
+    }
+
+    const modeBanner = document.getElementById("qb-mode-banner");
+    if (modeBanner) {
+        if (state.purchase.dryRun) {
+            modeBanner.className = "qb-banner ok";
+            modeBanner.innerHTML = `<i class="fa-solid fa-shield-halved"></i> 当前处于 <strong>Dry-Run 仿真演练模式</strong>：验证至确认页后将安全拦截并清理购物车，不产生真实扣款。`;
+        } else {
+            modeBanner.className = "qb-banner warn";
+            modeBanner.innerHTML = `<i class="fa-solid fa-fire"></i> 当前处于 <strong>LIVE 实盘下单模式</strong>：点击确定将向 Mandarake 提交真实购买订单！`;
+        }
+    }
+
+    const paySelect = document.getElementById("qb-payment-select");
+    if (paySelect) {
+        if (paySelect.options.length === 0 && (state.purchase.paymentMethods || []).length > 0) {
+            renderPaymentMethodOptions();
+        }
+        paySelect.value = state.purchase.defaultPaymentMethod || "bank";
+    }
+
+    const addrSummary = document.getElementById("qb-address-summary");
+    if (addrSummary) {
+        if (state.purchase.useCustomAddress) {
+            const a = state.purchase.address || {};
+            const name = `${a.last_name || ""} ${a.first_name || ""}`.trim() || "未填姓名";
+            const loc = `${a.postal_code || ""} ${a.prefecture || ""}${a.address1 || ""}`.trim() || "未填地址";
+            addrSummary.innerHTML = `<strong>收货地址（自定义覆盖）：</strong>${escapeHtml(name)} | ${escapeHtml(loc)} | ${escapeHtml(a.phone || "")}`;
+        } else {
+            addrSummary.innerHTML = `<strong>收货地址：</strong>自动沿用 Mandarake 官网会员中心已登记默认地址`;
+        }
+    }
+
+    modal.classList.add("active");
+}
+
+async function executeQuickBuy(item, paymentMethod, triggerBtn = null, onAfterClose = null) {
+    const origHtml = triggerBtn ? triggerBtn.innerHTML : "";
+    if (triggerBtn) {
+        triggerBtn.disabled = true;
+        triggerBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> 抢购中...`;
+    }
+
+    try {
+        const res = await fetch("/api/purchase/buy", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                item_id: item.id,
+                title: item.title || "",
+                price: item.price || 0,
+                img_url: item.img_url || "",
+                shop: item.shop || "",
+                dry_run: state.purchase.dryRun,
+                payment_method: paymentMethod || state.purchase.defaultPaymentMethod,
+            })
+        });
+        const data = await parseJsonResponse(res);
+        if (onAfterClose) onAfterClose();
+        if (data.purchase) updatePurchaseStatusUI(data.purchase);
+
+        if (data.status === "SUCCESS") {
+            showToast(data.message || "实盘抢购成功！", "success", 6000);
+            markProductCardSoldOut(item.id);
+        } else if (data.status === "DRY_RUN") {
+            showToast(data.message || "Dry-Run 仿真演练通过！", "info", 6000);
+        } else if (data.status === "NEED_PAYMENT_AUTH") {
+            showToast(data.message || "需要打开外部链接完成支付认证", "warning", 8000);
+        } else {
+            showToast(data.message || "抢购失败", "error", 6000);
+        }
+
+        if (state.activeTab === "tab-purchase") {
+            loadPurchaseOrders();
+        }
+    } catch (err) {
+        showToast("一键抢购请求异常: " + (err?.message || String(err)), "error");
+    } finally {
+        if (triggerBtn) {
+            const isProductBuyBtn = triggerBtn.classList.contains("btn-card-quick-buy");
+            const cardEl = isProductBuyBtn ? document.querySelector(`.product-card[data-item-id="${item.id}"]`) : null;
+            if (!isProductBuyBtn || !cardEl || !cardEl.classList.contains("is-soldout")) {
+                triggerBtn.disabled = false;
+                triggerBtn.innerHTML = origHtml || `<i class="fa-solid fa-bolt"></i> 一键抢购`;
+            }
+        }
+    }
+}
+
+function markProductCardSoldOut(itemId) {
+    const cardEl = document.querySelector(`.product-card[data-item-id="${itemId}"]`);
+    if (!cardEl) return;
+    cardEl.classList.add("is-soldout");
+    const badgeWrap = cardEl.querySelector(".card-badges");
+    if (badgeWrap) {
+        badgeWrap.innerHTML = '<span class="badge-tag soldout">🔴 売り切れ</span>';
+    }
+    const buyBtn = cardEl.querySelector(".btn-card-quick-buy");
+    if (buyBtn) {
+        buyBtn.disabled = true;
+        buyBtn.innerHTML = '<i class="fa-solid fa-bolt"></i> 已售罄';
+        buyBtn.title = "该商品已售罄";
+    }
+}
+
+// --- 抢购订单历史管理 ---
+
+async function loadPurchaseOrders() {
+    try {
+        const res = await fetch("/api/purchase/orders?limit=50");
+        const data = await parseJsonResponse(res);
+        if (!data.success) return;
+        renderPurchaseOrders(data.orders || []);
+        if (data.stats) renderOrderStatsSummary(data.stats);
+    } catch (err) {
+        console.debug("加载抢购历史异常:", err);
+    }
+}
+
+function renderOrderStatsSummary(stats) {
+    const el = document.getElementById("p-orders-stats");
+    if (!el || !stats) return;
+    el.textContent = `累计 ${stats.total || 0} 单 | 今日 ${stats.today_count || 0} 单 | 实盘成功 ${stats.success_count || 0} | 演练 ${stats.dry_run_count || 0} | 失败 ${stats.failed_count || 0}`;
+}
+
+function renderPurchaseOrders(orders) {
+    const container = document.getElementById("purchase-orders-list");
+    if (!container) return;
+
+    if (!orders || orders.length === 0) {
+        container.innerHTML = `<div class="empty-orders-tip">暂无抢购记录，前往【商品阅览】点击「⚡ 一键抢购」或开启自动抢购即可体验！</div>`;
+        return;
+    }
+
+    const statusBadgeMap = {
+        "SUCCESS": { cls: "status-success", text: "✅ 实盘成功" },
+        "DRY_RUN": { cls: "status-dry-run", text: "🛡️ 仿真演练" },
+        "NEED_PAYMENT_AUTH": { cls: "status-need-auth", text: "🔐 待支付认证" },
+        "FAILED": { cls: "status-failed", text: "❌ 失败" },
+    };
+
+    container.innerHTML = "";
+    orders.forEach(ord => {
+        const stInfo = statusBadgeMap[ord.status] || { cls: "status-failed", text: ord.status || "未知" };
+        const imgUrl = ord.img_url || DEFAULT_ITEM_THUMB;
+        const itemUrl = ord.url || `https://order.mandarake.co.jp/order/detailPage/item?itemCode=${ord.item_id}`;
+        let triggerLabel = "🖱️ 一键抢购";
+        if (ord.trigger_type === "auto") {
+            triggerLabel = `⚡ 自动抢购${ord.rule_name ? ` (${ord.rule_name})` : ""}`;
+        } else if (ord.trigger_type === "live_test") {
+            triggerLabel = "🧪 实盘终步前测试";
+        }
+        const payLabel = ord.payment_label || ord.payment_method || "-";
+        const timeStr = formatTimestamp(ord.created_at);
+
+        const row = document.createElement("div");
+        row.className = "order-history-item";
+        row.innerHTML = `
+            <img class="order-history-thumb" src="${escapeHtml(imgUrl)}" alt="" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='/static/icon-192.png'">
+            <div class="order-history-body">
+                <div class="order-history-head">
+                    <a class="order-history-title" href="${escapeHtml(itemUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(ord.title || `商品 ${ord.item_id}`)}</a>
+                    <span class="order-status-pill ${stInfo.cls}">${stInfo.text}</span>
+                </div>
+                <div class="order-history-meta">
+                    <span><i class="fa-solid fa-yen-sign"></i> ${ord.price ? `${Number(ord.price).toLocaleString()}円` : (escapeHtml(ord.price_str) || "-")}</span>
+                    <span><i class="fa-solid fa-wallet"></i> ${escapeHtml(payLabel)}</span>
+                    <span>${escapeHtml(triggerLabel)}</span>
+                    <span><i class="fa-regular fa-clock"></i> ${escapeHtml(timeStr)} (${ord.duration_ms || 0}ms)</span>
+                </div>
+                <div class="order-history-msg">${escapeHtml(ord.message || "")}</div>
+                ${ord.payment_url ? `<div class="mt-3"><a class="btn btn-warning btn-xs" href="${escapeHtml(ord.payment_url)}" target="_blank" rel="noopener noreferrer"><i class="fa-solid fa-arrow-up-right-from-square"></i> 前往完成支付认证</a></div>` : ""}
+            </div>
+            <div class="order-history-actions">
+                <button type="button" class="btn btn-outline-danger btn-xs btn-del-order" title="删除此条记录"><i class="fa-solid fa-trash-can"></i></button>
+            </div>
+        `;
+        row.querySelector(".btn-del-order")?.addEventListener("click", () => deletePurchaseOrder(ord.id));
+        container.appendChild(row);
+    });
+}
+
+async function deletePurchaseOrder(orderId) {
+    try {
+        const res = await fetch(`/api/purchase/orders/${encodeURIComponent(orderId)}`, { method: "DELETE" });
+        const data = await parseJsonResponse(res);
+        if (data.success) {
+            loadPurchaseOrders();
+        }
+    } catch (err) {
+        showToast("删除记录失败: " + (err?.message || String(err)), "error");
+    }
+}
+
+async function clearPurchaseOrders() {
+    if (!confirm("确定清空全部抢购 / 下单历史记录吗？")) return;
+    try {
+        const res = await fetch("/api/purchase/orders/clear", { method: "POST" });
+        const data = await parseJsonResponse(res);
+        if (data.success) {
+            showToast("已清空抢购历史记录", "info");
+            loadPurchaseOrders();
+        }
+    } catch (err) {
+        showToast("清空失败: " + (err?.message || String(err)), "error");
+    }
+}
+
+function handleOrderUpdatedEvent(order) {
+    if (!order) return;
+    if (state.activeTab === "tab-purchase") {
+        loadPurchaseOrders();
+    } else {
+        const badge = document.getElementById("purchase-orders-badge");
+        if (badge) {
+            state.purchase.unreadOrders = (state.purchase.unreadOrders || 0) + 1;
+            badge.textContent = state.purchase.unreadOrders;
+            badge.style.display = "inline-flex";
+        }
+    }
+    if (order.trigger_type === "auto") {
+        const type = order.status === "SUCCESS" ? "success" : (order.status === "DRY_RUN" ? "info" : "warning");
+        showToast(`⚡ 自动抢购结果 [${order.status}]: ${order.title || order.item_id}`, type, 5000);
+    }
+    if (order.status === "SUCCESS") {
+        markProductCardSoldOut(order.item_id);
+    }
+}
+
+function handleOrdersClearedEvent() {
+    if (state.activeTab === "tab-purchase") {
+        loadPurchaseOrders();
+    }
+}
+
+function clearPurchaseOrdersBadge() {
+    state.purchase.unreadOrders = 0;
+    const badge = document.getElementById("purchase-orders-badge");
+    if (badge) {
+        badge.style.display = "none";
+    }
+}
+
+async function runLiveCheckoutTest() {
+    const btn = document.getElementById("btn-p-test-live-checkout");
+    const inputEl = document.getElementById("p-live-test-item-id");
+    const resultEl = document.getElementById("p-live-test-result");
+    const itemInput = inputEl ? inputEl.value.trim() : "";
+
+    const selectedRadio = document.querySelector("input[name='p-default-payment']:checked");
+    const paymentMethod = selectedRadio ? selectedRadio.value : state.purchase.defaultPaymentMethod;
+
+    const origHtml = btn ? btn.innerHTML : "";
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> 正在实盘链路测试...`;
+    }
+    if (resultEl) {
+        resultEl.style.display = "block";
+        resultEl.className = "live-test-result";
+        resultEl.innerHTML = `<div class="live-test-summary"><i class="fa-solid fa-spinner fa-spin"></i> 正在校验登录态、加购并模拟推进至订单确认页（最后一步下单前自动拦截）...</div>`;
+    }
+
+    try {
+        const res = await fetch("/api/purchase/test_live_checkout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                item_id: itemInput,
+                payment_method: paymentMethod
+            })
+        });
+        const data = await parseJsonResponse(res);
+        if (data.purchase) updatePurchaseStatusUI(data.purchase);
+
+        const ok = Boolean(data.success);
+        const steps = Array.isArray(data.steps) ? data.steps : [];
+        const tested = data.tested_item || null;
+        const testedLine = tested
+            ? `<div style="margin-bottom:6px;color:var(--text-secondary);">测试商品：<strong>${escapeHtml(tested.title || tested.id)}</strong> (ID: ${escapeHtml(tested.id)}${tested.price ? ` · ${Number(tested.price).toLocaleString()}円` : ""})</div>`
+            : "";
+
+        const stepsHtml = steps.map(st => `
+            <div class="live-test-step ${st.ok ? "ok" : "fail"}">
+                <i class="fa-solid ${st.ok ? "fa-circle-check" : "fa-circle-xmark"}"></i>
+                <span><strong>${escapeHtml(st.label || st.step || "")}：</strong>${escapeHtml(st.detail || "")}</span>
+            </div>
+        `).join("");
+
+        if (resultEl) {
+            resultEl.style.display = "block";
+            resultEl.className = `live-test-result ${ok ? "ok" : "err"}`;
+            resultEl.innerHTML = `
+                <div class="live-test-summary">${ok ? "✅ " : "❌ "}${escapeHtml(data.message || (ok ? "实盘终步前链路测试通过" : "测试未通过"))}</div>
+                ${testedLine}
+                <div class="live-test-steps">${stepsHtml}</div>
+            `;
+        }
+
+        showToast(data.message || (ok ? "实盘抢购终步前测试成功！" : "测试失败"), ok ? "success" : "error", 6000);
+        loadPurchaseOrders();
+    } catch (err) {
+        const errMsg = err?.message || String(err);
+        if (resultEl) {
+            resultEl.style.display = "block";
+            resultEl.className = "live-test-result err";
+            resultEl.innerHTML = `<div class="live-test-summary">❌ ${escapeHtml(errMsg)}</div>`;
+        }
+        showToast(errMsg, "error", 7000);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = origHtml || `<i class="fa-solid fa-flask-vial"></i> 实盘抢购测试（终步前停止）`;
+        }
+    }
+}

@@ -27,18 +27,22 @@ SEEN_MAX_SIZE = 50000
 class MandarakeMonitor:
     """Mandarake 在库监控器"""
 
-    def __init__(self, config: Dict[str, Any], notifier_mgr: NotificationManager):
+    def __init__(self, config: Dict[str, Any], notifier_mgr: NotificationManager, auto_order: Optional[Any] = None):
         self.config = config
         self.notifier_mgr = notifier_mgr
+        self.auto_order = auto_order
         self.scraper = MandarakeScraper()
         self.db = archive_db
         self.scheduler = None
 
         self._check_lock = threading.Lock()
         self._notify_lock = threading.Lock()
+        self._order_dispatch_lock = threading.Lock()
         self._fetch_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="MandarakeFetch")
         self._notify_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="MandarakeNotify")
+        self._order_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="MandarakeAutoOrder")
         self._pending_notify_futures: List[Future] = []
+        self._in_flight_auto_ids: set = set()
 
         self.seen_ids: "OrderedDict[str, None]" = OrderedDict()
         self._seen_dirty: bool = False
@@ -126,6 +130,73 @@ class MandarakeMonitor:
         self.wait_notifications(timeout=10.0)
         self._fetch_executor.shutdown(wait=False)
         self._notify_executor.shutdown(wait=False)
+        self._order_executor.shutdown(wait=False)
+
+    def _maybe_trigger_auto_buy(self, rule: Dict[str, Any], in_stock_hits: List[Dict[str, Any]]):
+        """命中在库新商品时，按全局与规则配置异步触发自动抢购"""
+        if not self.auto_order or not in_stock_hits:
+            return
+        purchase_cfg = self.config.get("purchase", {})
+        if not bool(purchase_cfg.get("auto_buy_enabled", False)):
+            return
+
+        scope = str(purchase_cfg.get("auto_buy_scope", "rule_enabled")).strip().lower()
+        rule_name = str(rule.get("name", "未命名规则"))
+        if scope == "rule_enabled" and not bool(rule.get("auto_buy", False)):
+            return
+
+        buy_on_restock = bool(purchase_cfg.get("auto_buy_on_restock", True))
+        try:
+            global_max_price = max(0, int(purchase_cfg.get("auto_buy_max_price", 0) or 0))
+        except (ValueError, TypeError):
+            global_max_price = 0
+
+        for hit in in_stock_hits:
+            pid = str(hit.get("id", "")).strip()
+            if not pid:
+                continue
+            if int(hit.get("is_in_stock", 0)) != 1 or hit.get("instant_soldout"):
+                continue
+            if hit.get("is_restock") and not buy_on_restock:
+                logger.info(f"⏭️ [自动抢购] 商品 {hit.get('title')} (ID: {pid}) 属补货复活且已关闭复活抢购，跳过")
+                continue
+
+            try:
+                price = int(hit.get("price", 0) or 0)
+            except (ValueError, TypeError):
+                price = 0
+
+            if global_max_price > 0 and price > global_max_price:
+                logger.info(
+                    f"⏭️ [自动抢购] 规则 [{rule_name}] 命中商品 {hit.get('title')} ({price:,}円) "
+                    f"超出自动抢购全局限价 ({global_max_price:,}円)，跳过下单"
+                )
+                continue
+
+            with self._order_dispatch_lock:
+                if pid in self._in_flight_auto_ids:
+                    continue
+                self._in_flight_auto_ids.add(pid)
+
+            def _run_auto_buy(target_item: Dict[str, Any], target_pid: str, r_name: str):
+                try:
+                    self.auto_order.order_item(
+                        item_id=target_pid,
+                        title=target_item.get("title", ""),
+                        price=int(target_item.get("price", 0) or 0),
+                        img_url=target_item.get("img_url", ""),
+                        shop=target_item.get("shop", ""),
+                        trigger_type="auto",
+                        rule_name=r_name,
+                    )
+                except Exception as exc:
+                    logger.error(f"❌ [自动抢购] 异步抢购任务异常 (ID={target_pid}): {exc}")
+                finally:
+                    with self._order_dispatch_lock:
+                        self._in_flight_auto_ids.discard(target_pid)
+
+            logger.info(f"⚡ [自动抢购] 规则 [{rule_name}] 已提交极速自动下单任务: {hit.get('title')} (ID: {pid})")
+            self._order_executor.submit(_run_auto_buy, dict(hit), pid, rule_name)
 
     def add_record_listener(self, listener):
         """注册上新提醒记录监听器"""
@@ -259,7 +330,7 @@ class MandarakeMonitor:
             req_timeout = 8
         else:
             effective_retries = min(raw_retry, 3)
-            retry_delay = max(0.5, float(sched_cfg.get("retry_delay", 2.0)))
+            retry_delay = max(0.1, float(sched_cfg.get("retry_delay", 2.0)))
             req_timeout = 10
 
         rules = self.config.get("rules")
@@ -523,7 +594,9 @@ class MandarakeMonitor:
                 soldout_hits = [x for x in rule_hits if x.get("is_in_stock") == 0 or x.get("instant_soldout")]
                 logger.info(f"🎯 规则 [{rule_name}] 命中 {len(rule_hits)} 件新商品 (在库: {len(in_stock_hits)}, 秒切已售: {len(soldout_hits)})！")
 
-                # 优先异步分发通知（不阻塞后续规则匹配与数据库写入）
+                # 优先异步触发自动抢购与通知推送（不阻塞后续规则匹配与数据库写入）
+                if in_stock_hits:
+                    self._maybe_trigger_auto_buy(rule, in_stock_hits)
                 self._submit_notification(list(rule_hits), rule_name)
 
                 # 写入数据库归档并同步更新内存库存映射
